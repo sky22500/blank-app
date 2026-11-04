@@ -7,6 +7,7 @@ import calendar
 import re
 import json
 import gspread
+from google.oauth2.service_account import Credentials
 
 # 1. 페이지 설정
 st.set_page_config(page_title="마케팅 부문 대시보드", layout="wide")
@@ -22,92 +23,84 @@ def render_html(html_str):
     else:
         st.markdown(html_str, unsafe_allow_html=True)
 
-# ----------------- 구글 시트 동기화 엔진 -----------------
+# 구글 스프레드시트 연동 클라이언트 및 저장소 설정
 @st.cache_resource
 def get_gspread_client():
+    if "gcp_service_account" not in st.secrets:
+        return None
     try:
-        if "gcp_service_account" not in st.secrets:
-            return None
-        creds = dict(st.secrets["gcp_service_account"])
-        if "private_key" in creds and "\\n" in creds["private_key"]:
-            creds["private_key"] = creds["private_key"].replace("\\n", "\n")
-        return gspread.service_account_from_dict(creds)
-    except Exception as e:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception:
         return None
 
 def get_db_worksheet():
     gc = get_gspread_client()
     if not gc:
         return None
+    sheet_url = st.secrets.get("sheet", {}).get("url")
+    if not sheet_url:
+        return None
     try:
-        sheet_url = st.secrets["sheet"]["url"]
         sh = gc.open_by_url(sheet_url)
         try:
-            ws = sh.worksheet("DASHBOARD_DB")
-        except:
-            try:
-                ws = sh.add_worksheet(title="DASHBOARD_DB", rows=100, cols=5)
-            except:
-                ws = sh.get_worksheet(0)
+            ws = sh.worksheet("DB_STATE")
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title="DB_STATE", rows=100, cols=20)
         return ws
-    except Exception as e:
+    except Exception:
         return None
-
-def save_data_to_sheet(payload):
-    ws = get_db_worksheet()
-    if not ws:
-        return False, "구글 시트 연동 실패: Secrets 설정을 확인하세요."
-    try:
-        json_str = json.dumps(payload, ensure_ascii=False)
-        CHUNK_SIZE = 30000
-        chunks = [[json_str[i:i + CHUNK_SIZE]] for i in range(0, len(json_str), CHUNK_SIZE)]
-        ws.clear()
-        ws.update(chunks, 'A1')
-        load_data_from_sheet.clear()
-        return True, "성공"
-    except Exception as e:
-        return False, str(e)
 
 @st.cache_data(ttl=60)
-def load_data_from_sheet():
+def fetch_db_state_cached():
     ws = get_db_worksheet()
     if not ws:
         return None
     try:
-        col_vals = ws.col_values(1)
-        if not col_vals:
+        data = ws.get_all_values()
+        if not data:
             return None
-        json_str = "".join(col_vals)
-        if not json_str.strip():
-            return None
-        data = json.loads(json_str)
-        return data
-    except Exception as e:
+        state_dict = {}
+        for row in data:
+            if not row or not row[0]:
+                continue
+            k = row[0]
+            full_json = "".join(row[1:])
+            if full_json:
+                try:
+                    state_dict[k] = json.loads(full_json)
+                except Exception:
+                    pass
+        return state_dict
+    except Exception:
         return None
 
-def sync_session_from_sheet():
-    sheet_data = load_data_from_sheet()
-    if sheet_data:
-        st.session_state['target_date'] = sheet_data.get('target_date', default_target_date)
-        if 'kpi_data' in sheet_data:
-            st.session_state['kpi_data'] = sheet_data['kpi_data']
-        if 'chart_data' in sheet_data:
-            st.session_state['chart_data'] = sheet_data['chart_data']
-        if 'inventory_data' in sheet_data:
-            st.session_state['inventory_data'] = sheet_data['inventory_data']
-        if 'fcst_data' in sheet_data:
-            st.session_state['fcst_data'] = sheet_data['fcst_data']
-        if 'mapping_data' in sheet_data:
-            st.session_state['mapping_data'] = sheet_data['mapping_data']
-        if 'actual_by_day' in sheet_data:
-            raw_act = sheet_data['actual_by_day']
-            st.session_state['actual_by_day'] = {int(k) if str(k).isdigit() else k: v for k, v in raw_act.items()}
-        for k in ['_ship_plan_by_model', '_ship_plan_by_site', '_ship_actual_by_model', '_ship_actual_by_site']:
-            if k in sheet_data:
-                st.session_state[k] = sheet_data[k]
-        st.session_state['data_loaded'] = True
+def save_state_to_gsheet(state_dict):
+    ws = get_db_worksheet()
+    if not ws:
+        return False
+    try:
+        rows = []
+        for k, v in state_dict.items():
+            s = json.dumps(v, ensure_ascii=False)
+            chunks = [s[i:i+40000] for i in range(0, len(s), 40000)]
+            rows.append([k] + chunks)
+        ws.clear()
+        ws.update(rows)
+        fetch_db_state_cached.clear()
+        return True
+    except Exception as e:
+        st.error(f"구글 시트 저장 실패: {e}")
+        return False
 
-# 세션 상태 초기화 및 기본값 설정
+# 세션 상태 기본값 초기화
 if 'target_date' not in st.session_state:
     st.session_state['target_date'] = default_target_date
 
@@ -127,6 +120,9 @@ if 'actual_by_day' not in st.session_state:
 
 if 'active_cal_popup' not in st.session_state:
     st.session_state['active_cal_popup'] = None
+
+if 'data_loaded' not in st.session_state: 
+    st.session_state['data_loaded'] = False
 
 default_kpis = {
     'daily': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0},
@@ -162,9 +158,12 @@ else:
 if 'inventory_data' not in st.session_state:
     st.session_state['inventory_data'] = {'qty': 0, 'days': 0.0}
 
-# 접속 시 구글 시트에 기존 저장된 데이터가 있다면 자동 동기화
-if not st.session_state.get('data_loaded', False):
-    sync_session_from_sheet()
+# 구글 시트에 저장된 공용 실적 데이터 자동 로드 및 동기화
+if not st.session_state.get('data_loaded'):
+    saved_state = fetch_db_state_cached()
+    if saved_state:
+        for k, v in saved_state.items():
+            st.session_state[k] = v
 
 # 2. 안전 유틸 및 포맷팅 함수
 def safe_cell(sheet, r, c):
@@ -244,7 +243,7 @@ def is_match_date(cell_val, target_str):
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8-sig')
 
-# 계획 폰트 일치(초록색) 및 계획 대비 실적 차이(+파랑 / -빨강) 통합 KPI 카드
+# KPI 카드 렌더링
 def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption=None):
     if is_rev:
         act_str = f"{actual_val:,.2f}억원"
@@ -370,7 +369,7 @@ if hasattr(st, "dialog"):
             
             st.dataframe(
                 df_pop[['모델명', 'GH-CODE', '출하 SITE', '공급수량', '단가(원)', '예상매출(억원)']], 
-                width="stretch", 
+                use_container_width=True, 
                 hide_index=True
             )
             
@@ -542,7 +541,7 @@ def parse_production_excel(file_bytes, target_date_str):
                 parsed['daily_models'] = models
     return parsed
 
-# 3-3. 출하 실적 파싱 및 일자별 실적 맵(day_actual_totals) 생성 엔진
+# 3-3. 출하 실적 파싱 및 일자별 실적 맵 생성 엔진
 def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
     wb = openpyxl.load_workbook(file_bytes, data_only=True)
     sheet_name = next((s for s in wb.sheetnames if any(k in s for k in ['출하', '일별', '실적', '11월'])), wb.sheetnames[0])
@@ -904,20 +903,25 @@ render_html("""
 </style>
 """)
 
-# 5. 사이드바
+# 5. 사이드바 메뉴 및 실시간 최신화 버튼
 with st.sidebar:
-    st.markdown("### 🔄 데이터 동기화")
-    if st.button("구글 시트 최신 데이터 불러오기", width="stretch"):
-        load_data_from_sheet.clear()
-        sync_session_from_sheet()
-        st.success("동기화 완료!")
-        st.rerun()
-    st.markdown("---")
     menu = st.radio("📂 Folder", (
         "🏠 현황", "1. 모델별 출하실적", "2. 모델별 생산실적", 
         "3. 출하 SITE별 실적", "4. 고객 FCST 조회", "5. 완제품 재고 조회", 
         "6. 캘린더", "7. 데이터 관리 (Admin)"
     ))
+    
+    st.markdown("---")
+    if st.button("🔄 최신 실적 불러오기", use_container_width=True):
+        fetch_db_state_cached.clear()
+        latest = fetch_db_state_cached()
+        if latest:
+            for k, v in latest.items():
+                st.session_state[k] = v
+            st.success("최신 데이터가 동기화되었습니다!")
+            st.rerun()
+        else:
+            st.info("동기화할 구글 시트 저장 데이터가 없습니다.")
 
 def create_active_chart(title, categories, plan_data, actual_data, name1="계획", name2="실적", unit="개"):
     fig = go.Figure()
@@ -1127,26 +1131,20 @@ if menu == "7. 데이터 관리 (Admin)":
                 })
             st.session_state['chart_data']['ship_by_site'] = merged_sites
 
-            # 6. 구글 스프레드시트에 영구 동기화
-            payload = {
-                'target_date': st.session_state['target_date'],
-                'kpi_data': st.session_state['kpi_data'],
-                'chart_data': st.session_state['chart_data'],
-                'inventory_data': st.session_state['inventory_data'],
-                'fcst_data': st.session_state['fcst_data'],
-                'mapping_data': st.session_state['mapping_data'],
-                'actual_by_day': st.session_state['actual_by_day'],
-                '_ship_plan_by_model': st.session_state.get('_ship_plan_by_model', {}),
-                '_ship_plan_by_site': st.session_state.get('_ship_plan_by_site', {}),
-                '_ship_actual_by_model': st.session_state.get('_ship_actual_by_model', {}),
-                '_ship_actual_by_site': st.session_state.get('_ship_actual_by_site', {})
-            }
-            with st.spinner("구글 스프레드시트에 데이터를 동기화하고 있습니다..."):
-                ok, msg = save_data_to_sheet(payload)
-                if ok:
-                    st.success("☁️ 구글 스프레드시트에 영구 저장 완료! 이제 핸드폰과 모든 팀원의 화면에도 동일하게 반영됩니다.")
+            # 6. 구글 스프레드시트에 공용 영구 저장 및 동기화
+            with st.spinner("구글 스프레드시트에 분석 데이터를 안전하게 저장하고 동기화하는 중..."):
+                sync_keys = [
+                    'target_date', 'kpi_data', 'chart_data', 'inventory_data',
+                    'fcst_data', 'actual_by_day', 'mapping_data', 'data_loaded',
+                    '_ship_plan_by_model', '_ship_actual_by_model',
+                    '_ship_plan_by_site', '_ship_actual_by_site'
+                ]
+                save_payload = {k: st.session_state[k] for k in sync_keys if k in st.session_state}
+                is_saved = save_state_to_gsheet(save_payload)
+                if is_saved:
+                    st.success("🎉 구글 시트 저장 완료! 이제 핸드폰과 모든 팀원의 화면에도 동일하게 실적이 표시됩니다.")
                 else:
-                    st.warning(f"⚠️ 구글 시트 저장 안내: {msg} (현재 세션에만 반영되었습니다)")
+                    st.warning("⚠️ 분석은 완료되었으나 구글 시트 저장에 실패했습니다. 서비스 계정 권한(편집자 초대)을 확인해 주세요.")
 
 elif menu == "🏠 현황":
     st.title("📊 실시간 현황")
@@ -1180,11 +1178,11 @@ elif menu == "🏠 현황":
         mch1, mch2, mch3 = st.columns(3)
         m_months = cdata.get('monthly_months', ['11월'])
         with mch1:
-            st.plotly_chart(create_active_chart("월별 생산 실적", m_months, cdata.get('monthly_prod_p', [0]), cdata.get('monthly_prod_a', [0]), unit="K"), width="stretch")
+            st.plotly_chart(create_active_chart("월별 생산 실적", m_months, cdata.get('monthly_prod_p', [0]), cdata.get('monthly_prod_a', [0]), unit="K"), use_container_width=True)
         with mch2:
-            st.plotly_chart(create_active_chart("월별 출하 실적", m_months, cdata.get('monthly_ship_p', [0]), cdata.get('monthly_ship_a', [0]), unit="K"), width="stretch")
+            st.plotly_chart(create_active_chart("월별 출하 실적", m_months, cdata.get('monthly_ship_p', [0]), cdata.get('monthly_ship_a', [0]), unit="K"), use_container_width=True)
         with mch3:
-            st.plotly_chart(create_active_chart("월별 매출 실적", m_months, cdata.get('monthly_rev_p', [0.0]), cdata.get('monthly_rev_a', [0.0]), unit="억원"), width="stretch")
+            st.plotly_chart(create_active_chart("월별 매출 실적", m_months, cdata.get('monthly_rev_p', [0.0]), cdata.get('monthly_rev_a', [0.0]), unit="억원"), use_container_width=True)
 
     # 2. Weekly 탭
     with tab_weekly:
@@ -1203,11 +1201,11 @@ elif menu == "🏠 현황":
         wch1, wch2, wch3 = st.columns(3)
         w_weeks = cdata.get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
         with wch1:
-            st.plotly_chart(create_active_chart("주차별 생산 실적", w_weeks, cdata.get('weekly_prod_p', [0]*len(w_weeks)), cdata.get('weekly_prod_a', [0]*len(w_weeks)), unit="K"), width="stretch")
+            st.plotly_chart(create_active_chart("주차별 생산 실적", w_weeks, cdata.get('weekly_prod_p', [0]*len(w_weeks)), cdata.get('weekly_prod_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
         with wch2:
-            st.plotly_chart(create_active_chart("주차별 출하 실적", w_weeks, cdata.get('weekly_ship_p', [0]*len(w_weeks)), cdata.get('weekly_ship_a', [0]*len(w_weeks)), unit="K"), width="stretch")
+            st.plotly_chart(create_active_chart("주차별 출하 실적", w_weeks, cdata.get('weekly_ship_p', [0]*len(w_weeks)), cdata.get('weekly_ship_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
         with wch3:
-            st.plotly_chart(create_active_chart("주차별 매출 실적", w_weeks, cdata.get('weekly_rev_p', [0.0]*len(w_weeks)), cdata.get('weekly_rev_a', [0.0]*len(w_weeks)), unit="억원"), width="stretch")
+            st.plotly_chart(create_active_chart("주차별 매출 실적", w_weeks, cdata.get('weekly_rev_p', [0.0]*len(w_weeks)), cdata.get('weekly_rev_a', [0.0]*len(w_weeks)), unit="억원"), use_container_width=True)
 
     # 3. Daily 탭
     with tab_daily:
@@ -1224,11 +1222,11 @@ elif menu == "🏠 현황":
 
         ch1, ch2, ch3 = st.columns(3)
         with ch1:
-            st.plotly_chart(create_active_chart("생산 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['prod_p']], [kpi['daily']['prod_a']], unit="K"), width="stretch")
+            st.plotly_chart(create_active_chart("생산 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['prod_p']], [kpi['daily']['prod_a']], unit="K"), use_container_width=True)
         with ch2:
-            st.plotly_chart(create_active_chart("출하 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['ship_p']], [kpi['daily']['ship_a']], unit="K"), width="stretch")
+            st.plotly_chart(create_active_chart("출하 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['ship_p']], [kpi['daily']['ship_a']], unit="K"), use_container_width=True)
         with ch3:
-            st.plotly_chart(create_active_chart("매출 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['rev_p']], [kpi['daily']['rev_a']], unit="억원"), width="stretch")
+            st.plotly_chart(create_active_chart("매출 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['rev_p']], [kpi['daily']['rev_a']], unit="억원"), use_container_width=True)
 
 elif menu == "1. 모델별 출하실적":
     st.subheader("📦 1. 모델별 출하 및 매출 현황 (계획 vs 실적)")
@@ -1238,19 +1236,19 @@ elif menu == "1. 모델별 출하실적":
         
         tab_qty, tab_rev = st.tabs(["🚚 출하 수량 현황 (K)", "💰 매출액 현황 (억원)"])
         with tab_qty:
-            st.plotly_chart(create_active_chart("모델별 출하 수량 (계획 vs 실적)", df_ship['모델명'].tolist(), df_ship['출하계획(개)'].tolist(), df_ship['출하실적(개)'].tolist(), unit="K"), width="stretch")
+            st.plotly_chart(create_active_chart("모델별 출하 수량 (계획 vs 실적)", df_ship['모델명'].tolist(), df_ship['출하계획(개)'].tolist(), df_ship['출하실적(개)'].tolist(), unit="K"), use_container_width=True)
         with tab_rev:
-            st.plotly_chart(create_active_chart("모델별 매출액 (계획 vs 실적)", df_ship['모델명'].tolist(), df_ship['매출계획(억원)'].tolist(), df_ship['매출실적(억원)'].tolist(), unit="억원"), width="stretch")
+            st.plotly_chart(create_active_chart("모델별 매출액 (계획 vs 실적)", df_ship['모델명'].tolist(), df_ship['매출계획(억원)'].tolist(), df_ship['매출실적(억원)'].tolist(), unit="억원"), use_container_width=True)
             
         col1, col2 = st.columns([0.8, 0.2])
         with col2: st.download_button(label="📥 엑셀(CSV) 다운로드", data=convert_df(df_ship), file_name='model_shipment_performance.csv', mime='text/csv')
-        st.dataframe(df_ship[['모델명', '출하계획(K)', '출하실적(K)', '수량달성률(%)', '수량차질(K)', '매출계획(억원)', '매출실적(억원)', '매출달성률(%)']], width="stretch", hide_index=True)
+        st.dataframe(df_ship[['모델명', '출하계획(K)', '출하실적(K)', '수량달성률(%)', '수량차질(K)', '매출계획(억원)', '매출실적(억원)', '매출달성률(%)']], use_container_width=True, hide_index=True)
     else: st.info("출하 실적 및 계획 데이터를 업로드해 주세요.")
         
 elif menu == "2. 모델별 생산실적":
     st.subheader("🛠️ 2. 모델별 생산실적")
     cdata = st.session_state['chart_data']
-    st.plotly_chart(create_active_chart("모델별 생산 현황 (계획 vs 실적)", cdata.get('daily_models', []), cdata.get('daily_prod_p', []), cdata.get('daily_prod_a', []), unit="K"), width="stretch")
+    st.plotly_chart(create_active_chart("모델별 생산 현황 (계획 vs 실적)", cdata.get('daily_models', []), cdata.get('daily_prod_p', []), cdata.get('daily_prod_a', []), unit="K"), use_container_width=True)
     
     df_prod = pd.DataFrame({"모델명": cdata.get('daily_models', []), "생산계획": cdata.get('daily_prod_p', []), "생산실적": cdata.get('daily_prod_a', [])})
     if not df_prod.empty:
@@ -1260,7 +1258,7 @@ elif menu == "2. 모델별 생산실적":
         df_prod['차질수량(K)'] = (df_prod['생산계획'] - df_prod['생산실적']).apply(format_k)
         col1, col2 = st.columns([0.8, 0.2])
         with col2: st.download_button(label="📥 엑셀(CSV) 다운로드", data=convert_df(df_prod), file_name='model_production.csv', mime='text/csv')
-        st.dataframe(df_prod[['모델명', '생산계획(K)', '생산실적(K)', '달성률(%)', '차질수량(K)']], width="stretch", hide_index=True)
+        st.dataframe(df_prod[['모델명', '생산계획(K)', '생산실적(K)', '달성률(%)', '차질수량(K)']], use_container_width=True, hide_index=True)
 
 elif menu == "3. 출하 SITE별 실적":
     st.subheader("📍 3. 출하 SITE별 출하 및 매출 현황 (계획 vs 실적)")
@@ -1270,13 +1268,13 @@ elif menu == "3. 출하 SITE별 실적":
         
         tab_s_qty, tab_s_rev = st.tabs(["🚚 SITE별 출하 수량 (K)", "💰 SITE별 매출액 (억원)"])
         with tab_s_qty:
-            st.plotly_chart(create_active_chart("SITE별 출하 수량 (계획 vs 실적)", df_site['SITE'].tolist(), df_site['출하계획(개)'].tolist(), df_site['출하실적(개)'].tolist(), unit="K"), width="stretch")
+            st.plotly_chart(create_active_chart("SITE별 출하 수량 (계획 vs 실적)", df_site['SITE'].tolist(), df_site['출하계획(개)'].tolist(), df_site['출하실적(개)'].tolist(), unit="K"), use_container_width=True)
         with tab_s_rev:
-            st.plotly_chart(create_active_chart("SITE별 매출액 (계획 vs 실적)", df_site['SITE'].tolist(), df_site['매출계획(억원)'].tolist(), df_site['매출실적(억원)'].tolist(), unit="억원"), width="stretch")
+            st.plotly_chart(create_active_chart("SITE별 매출액 (계획 vs 실적)", df_site['SITE'].tolist(), df_site['매출계획(억원)'].tolist(), df_site['매출실적(억원)'].tolist(), unit="억원"), use_container_width=True)
             
         col1, col2 = st.columns([0.8, 0.2])
         with col2: st.download_button(label="📥 엑셀(CSV) 다운로드", data=convert_df(df_site), file_name='site_shipment_performance.csv', mime='text/csv')
-        st.dataframe(df_site[['SITE', '출하계획(K)', '출하실적(K)', '수량달성률(%)', '수량차질(K)', '매출계획(억원)', '매출실적(억원)', '매출달성률(%)']], width="stretch", hide_index=True)
+        st.dataframe(df_site[['SITE', '출하계획(K)', '출하실적(K)', '수량달성률(%)', '수량차질(K)', '매출계획(억원)', '매출실적(억원)', '매출달성률(%)']], use_container_width=True, hide_index=True)
     else: st.info("출하 실적 및 계획 데이터를 업로드해 주세요.")
 
 elif menu == "4. 고객 FCST 조회":
@@ -1354,7 +1352,7 @@ elif menu == "4. 고객 FCST 조회":
                         file_name='fcst_supply_by_model.csv',
                         mime='text/csv'
                     )
-                st.dataframe(df_model_disp, width="stretch", hide_index=True)
+                st.dataframe(df_model_disp, use_container_width=True, hide_index=True)
             else:
                 st.warning("선택한 조건에 해당하는 공급 일정이 없습니다.")
 
@@ -1377,7 +1375,7 @@ elif menu == "4. 고객 FCST 조회":
                         file_name='fcst_supply_detailed.csv',
                         mime='text/csv'
                     )
-                st.dataframe(df_detail_disp, width="stretch", hide_index=True)
+                st.dataframe(df_detail_disp, use_container_width=True, hide_index=True)
             else:
                 st.warning("선택한 조건에 해당하는 공급 일정이 없습니다.")
 
@@ -1402,7 +1400,7 @@ elif menu == "4. 고객 FCST 조회":
                     hovermode='x unified',
                     margin=dict(l=20, r=20, t=45, b=20)
                 )
-                st.plotly_chart(fig_top10, width="stretch")
+                st.plotly_chart(fig_top10, use_container_width=True)
                 
             with ch_col2:
                 daily_trend = df_filtered[valid_dates].sum()
@@ -1421,7 +1419,7 @@ elif menu == "4. 고객 FCST 조회":
                     hovermode='x unified',
                     margin=dict(l=20, r=20, t=45, b=20)
                 )
-                st.plotly_chart(fig_trend, width="stretch")
+                st.plotly_chart(fig_trend, use_container_width=True)
 
 elif menu == "5. 완제품 재고 조회":
     st.subheader("🏢 5. 완제품 재고 조회")
@@ -1448,7 +1446,7 @@ elif menu == "6. 캘린더":
             
         cur_year = 2027 if selected_m == 1 else 2026
 
-        cal_instance = calendar.Calendar(firstweekday=6) # 일요일 시작 (SUN)
+        cal_instance = calendar.Calendar(firstweekday=6)
         month_matrix = cal_instance.monthdayscalendar(cur_year, selected_m)
         num_days = calendar.monthrange(cur_year, selected_m)[1]
 
@@ -1558,7 +1556,7 @@ elif menu == "6. 캘린더":
                     df_popup['예상매출(억원)'] = df_popup['rev_ok'].apply(lambda x: f"{x:,.2f}억원")
                     df_popup = df_popup.rename(columns={'model': '모델명', 'gh_code': 'GH-CODE', 'site': '출하 SITE'})
                     df_popup = df_popup.sort_values(by='qty', ascending=False)
-                    st.dataframe(df_popup[['모델명', 'GH-CODE', '출하 SITE', '공급수량', '단가(원)', '예상매출(억원)']], width="stretch", hide_index=True)
+                    st.dataframe(df_popup[['모델명', 'GH-CODE', '출하 SITE', '공급수량', '단가(원)', '예상매출(억원)']], use_container_width=True, hide_index=True)
                 
                 btn_close, _ = st.columns([0.2, 0.8])
                 with btn_close:
@@ -1580,34 +1578,31 @@ elif menu == "6. 캘린더":
         h_cols = st.columns(7)
         for i, (h_title, text_color) in enumerate(days_headers):
             with h_cols[i]:
-                st.markdown(clean_html(f"""
+                render_html(f"""
                 <div style="background-color: #ffffff; border: 2px solid #111111; padding: 6px; text-align: center; font-weight: 900; font-size: 13px; box-shadow: 2px 2px 0px #111111; margin-bottom: 6px; border-radius: 4px;">
                     {h_title}
                 </div>
-                """), unsafe_allow_html=True)
+                """)
 
-        # 4. 달력 날짜 그리드 셀 렌더링 (호버 시 확장 팝업 + 모델명 칩 숨김 + 실적/계획 차이 표시)
+        # 4. 달력 날짜 그리드 셀 렌더링
         for week in month_matrix:
             w_cols = st.columns(7)
             for day_idx, d_num in enumerate(week):
                 with w_cols[day_idx]:
                     if d_num == 0:
-                        st.markdown(clean_html("<div style='height: 110px; background: rgba(0,0,0,0.02); border: 1px dashed #d1d5db; border-radius: 4px; margin-bottom: 6px;'></div>"), unsafe_allow_html=True)
+                        render_html("<div style='height: 110px; background: rgba(0,0,0,0.02); border: 1px dashed #d1d5db; border-radius: 4px; margin-bottom: 6px;'></div>")
                     else:
                         d_info = day_supply_map[d_num]
                         plan_q = d_info['total']
                         plan_rev = d_info['total_rev']
                         
-                        # 기준일자 이전 여부 판별
                         is_target = (selected_m == t_m and d_num == t_d)
                         is_past = (selected_m < t_m) or (selected_m == t_m and d_num <= t_d)
                         
-                        # 일자별 실적 데이터 조회
                         act_day_data = actual_by_day.get(d_num, {'qty': 0, 'rev': 0.0, 'items': []})
                         act_q = act_day_data['qty']
                         act_rev = act_day_data['rev']
                         
-                        # 카드 스타일 지정
                         if is_target:
                             border_css = "3px solid #0044ff; box-shadow: 4px 4px 0px #0044ff;"
                             bg_css = "#f0f5ff"
@@ -1621,7 +1616,6 @@ elif menu == "6. 캘린더":
                         elif day_idx == 6: day_color = "#0044ff"
                         else: day_color = "#111111"
 
-                        # [핵심] 일별 보드 표시: 기준일자 이전 vs 미래 일자 분기 (수량/매출액만 깔끔하게 노출)
                         if is_past:
                             diff_q = act_q - plan_q
                             diff_rev = act_rev - plan_rev
@@ -1666,7 +1660,6 @@ elif menu == "6. 캘린더":
                             </div>
                             """
 
-                        # [핵심] 호버(Hover) 시 확장되는 팝업창 HTML 구축
                         unique_models_cnt = len(set(it['model'] for it in d_info['items']))
                         items_sorted = sorted(d_info['items'], key=lambda x: x['qty'], reverse=True)
                         
@@ -1714,7 +1707,7 @@ elif menu == "6. 캘린더":
                             {hover_popup_html}
                         </div>
                         """
-                        st.markdown(clean_html(full_cell_html), unsafe_allow_html=True)
+                        render_html(full_cell_html)
 
                         btn_label = f"🔍 상세 ({unique_models_cnt}종)" if (plan_q > 0 or act_q > 0) else f"🔍 {d_num}일"
                         if st.button(btn_label, key=f"btn_pop_{selected_m}_{d_num}", use_container_width=True):
@@ -1724,7 +1717,7 @@ elif menu == "6. 캘린더":
                                 st.session_state['active_cal_popup'] = (d_num, selected_m, cur_year)
                                 st.rerun()
 
-        st.markdown("<br><hr style='border: 1px solid #111111;'>", unsafe_allow_html=True)
+        st.divider()
 
         # 5. 하단 일자별 공급 추이 차트
         st.markdown(f"### 📈 {selected_m}월 일자별 공급 수량 및 예상 매출 추이")
