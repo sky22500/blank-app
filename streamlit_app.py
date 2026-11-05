@@ -241,8 +241,17 @@ def is_match_date(cell_val, target_str):
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8-sig')
 
-# 프리미엄 디자인 - KPI 카드 렌더링 (텍스트 오리지널)
-def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption=None):
+# [기능 1] 카테고리(생산/출하/매출)별 통일된 상단 색상 렌더링
+def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption=None, category=None):
+    if category == "생산":
+        bg_accent = "linear-gradient(90deg, #f43f5e, #be123c)" # Red
+    elif category == "출하":
+        bg_accent = "linear-gradient(90deg, #3b82f6, #1d4ed8)" # Blue
+    elif category == "매출":
+        bg_accent = "linear-gradient(90deg, #10b981, #047857)" # Green
+    else:
+        bg_accent = "linear-gradient(90deg, #cbd5e1, #94a3b8)" # Fallback
+
     if is_rev:
         act_str = f"{actual_val:,.2f}억원"
         plan_str = f"{plan_val:,.2f}억원"
@@ -250,15 +259,12 @@ def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption
         if diff > 0:
             diff_str = f"+{diff:,.2f}억원"
             diff_color = "#10b981"
-            bg_accent = "linear-gradient(90deg, #10b981, #059669)"
         elif diff < 0:
             diff_str = f"-{abs(diff):,.2f}억원"
             diff_color = "#f43f5e"
-            bg_accent = "linear-gradient(90deg, #f43f5e, #e11d48)"
         else:
             diff_str = "0.00억원"
             diff_color = "#94a3b8"
-            bg_accent = "linear-gradient(90deg, #cbd5e1, #94a3b8)"
     else:
         act_str = format_k(actual_val)
         plan_str = format_k(plan_val)
@@ -266,15 +272,12 @@ def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption
         if diff > 0:
             diff_str = f"+{format_k(diff)}"
             diff_color = "#4f46e5"
-            bg_accent = "linear-gradient(90deg, #6366f1, #4f46e5)"
         elif diff < 0:
             diff_str = f"-{format_k(abs(diff))}"
             diff_color = "#f43f5e"
-            bg_accent = "linear-gradient(90deg, #f43f5e, #e11d48)"
         else:
             diff_str = "0K"
             diff_color = "#94a3b8"
-            bg_accent = "linear-gradient(90deg, #cbd5e1, #94a3b8)"
 
     sub_html = f"""
     <div style="font-size: 11.5px; color: #64748b; font-weight: 500; margin-top: 14px; padding-top: 10px; border-top: 1px dashed #e2e8f0; display: flex; align-items: center; gap: 6px;">
@@ -285,7 +288,7 @@ def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption
 
     html = f"""
     <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 22px 24px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03); margin-bottom: 12px; position: relative; overflow: hidden; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);">
-        <div style="position: absolute; top: 0; left: 0; width: 100%; height: 4px; background: {bg_accent};"></div>
+        <div style="position: absolute; top: 0; left: 0; width: 100%; height: 5px; background: {bg_accent};"></div>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
             <div style="display: flex; align-items: center; gap: 10px;">
                 <div style="width: 32px; height: 32px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
@@ -312,14 +315,17 @@ def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption
     """
     render_html(html)
 
-def render_achievement_gauge(title, actual, plan, unit="K"):
-    rate = (actual / plan * 100.0) if plan > 0 else 0.0
-    if rate >= 100:
-        bar_gradient = "linear-gradient(90deg, #4f46e5, #6366f1)"
-        badge_color = "#4f46e5"
-        shadow_color = "rgba(79, 70, 229, 0.3)"
-    elif rate >= 80:
-        bar_gradient = "linear-gradient(90deg, #059669, #10b981)"
+def render_achievement_gauge(title, actual, plan, unit="K", category=None):
+    if category == "생산":
+        bar_gradient = "linear-gradient(90deg, #f43f5e, #be123c)"
+        badge_color = "#e11d48"
+        shadow_color = "rgba(225, 29, 72, 0.3)"
+    elif category == "출하":
+        bar_gradient = "linear-gradient(90deg, #3b82f6, #1d4ed8)"
+        badge_color = "#2563eb"
+        shadow_color = "rgba(37, 99, 235, 0.3)"
+    elif category == "매출":
+        bar_gradient = "linear-gradient(90deg, #10b981, #047857)"
         badge_color = "#059669"
         shadow_color = "rgba(5, 150, 105, 0.3)"
     else:
@@ -327,6 +333,7 @@ def render_achievement_gauge(title, actual, plan, unit="K"):
         badge_color = "#d97706"
         shadow_color = "rgba(217, 119, 6, 0.3)"
 
+    rate = (actual / plan * 100.0) if plan > 0 else 0.0
     bar_width = min(max(rate, 0.0), 100.0)
 
     html = f"""
@@ -1142,15 +1149,15 @@ elif menu == "🏠 현황":
     with tab_monthly:
         m1, m2, m3 = st.columns(3)
         with m1: 
-            render_kpi_card("월간 생산 누계", "🏭", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'])
-            render_achievement_gauge("생산", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], unit="K")
+            render_kpi_card("월간 생산 누계", "🏭", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], category="생산")
+            render_achievement_gauge("생산", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], unit="K", category="생산")
         with m2: 
-            render_kpi_card("월간 출하 누계", "🚚", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'])
-            render_achievement_gauge("출하", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], unit="K")
+            render_kpi_card("월간 출하 누계", "🚚", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], category="출하")
+            render_achievement_gauge("출하", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], unit="K", category="출하")
         with m3: 
             rev_sub = f"당월 실적 {kpi['monthly']['pure_rev_a']:,.2f}억 + 이월 매출 {kpi['monthly']['carryover_rev']:,.2f}억"
-            render_kpi_card("월간 매출 누계", "💰", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], is_rev=True, sub_caption=rev_sub)
-            render_achievement_gauge("매출", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], unit="억원")
+            render_kpi_card("월간 매출 누계", "💰", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], is_rev=True, sub_caption=rev_sub, category="매출")
+            render_achievement_gauge("매출", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], unit="억원", category="매출")
 
         mch1, mch2, mch3 = st.columns(3)
         m_months = cdata.get('monthly_months', ['11월'])
@@ -1164,15 +1171,15 @@ elif menu == "🏠 현황":
     with tab_weekly:
         wk1, wk2, wk3 = st.columns(3)
         with wk1: 
-            render_kpi_card("주간 생산 누계", "🏭", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'])
-            render_achievement_gauge("생산", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], unit="K")
+            render_kpi_card("주간 생산 누계", "🏭", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], category="생산")
+            render_achievement_gauge("생산", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], unit="K", category="생산")
         with wk2: 
-            render_kpi_card("주간 출하 누계", "🚚", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'])
-            render_achievement_gauge("출하", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], unit="K")
+            render_kpi_card("주간 출하 누계", "🚚", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], category="출하")
+            render_achievement_gauge("출하", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], unit="K", category="출하")
         with wk3: 
             rev_sub = f"당월 실적 {kpi['weekly']['pure_rev_a']:,.2f}억 + 이월 매출 {kpi['weekly']['carryover_rev']:,.2f}억"
-            render_kpi_card("주간 매출 누계", "💰", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], is_rev=True, sub_caption=rev_sub)
-            render_achievement_gauge("매출", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], unit="억원")
+            render_kpi_card("주간 매출 누계", "💰", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], is_rev=True, sub_caption=rev_sub, category="매출")
+            render_achievement_gauge("매출", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], unit="억원", category="매출")
 
         wch1, wch2, wch3 = st.columns(3)
         w_weeks = cdata.get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
@@ -1186,14 +1193,14 @@ elif menu == "🏠 현황":
     with tab_daily:
         k1, k2, k3 = st.columns(3)
         with k1: 
-            render_kpi_card("생산 (TOTAL)", "🏭", kpi['daily']['prod_a'], kpi['daily']['prod_p'])
-            render_achievement_gauge("생산", kpi['daily']['prod_a'], kpi['daily']['prod_p'], unit="K")
+            render_kpi_card("생산 (TOTAL)", "🏭", kpi['daily']['prod_a'], kpi['daily']['prod_p'], category="생산")
+            render_achievement_gauge("생산", kpi['daily']['prod_a'], kpi['daily']['prod_p'], unit="K", category="생산")
         with k2: 
-            render_kpi_card("출하 (TOTAL)", "🚚", kpi['daily']['ship_a'], kpi['daily']['ship_p'])
-            render_achievement_gauge("출하", kpi['daily']['ship_a'], kpi['daily']['ship_p'], unit="K")
+            render_kpi_card("출하 (TOTAL)", "🚚", kpi['daily']['ship_a'], kpi['daily']['ship_p'], category="출하")
+            render_achievement_gauge("출하", kpi['daily']['ship_a'], kpi['daily']['ship_p'], unit="K", category="출하")
         with k3: 
-            render_kpi_card("매출 (TOTAL)", "💰", kpi['daily']['rev_a'], kpi['daily']['rev_p'], is_rev=True)
-            render_achievement_gauge("매출", kpi['daily']['rev_a'], kpi['daily']['rev_p'], unit="억원")
+            render_kpi_card("매출 (TOTAL)", "💰", kpi['daily']['rev_a'], kpi['daily']['rev_p'], is_rev=True, category="매출")
+            render_achievement_gauge("매출", kpi['daily']['rev_a'], kpi['daily']['rev_p'], unit="억원", category="매출")
 
         ch1, ch2, ch3 = st.columns(3)
         with ch1:
@@ -1412,7 +1419,7 @@ elif menu == "6. 캘린더":
     else:
         t_m, t_d = parse_target_day_info(st.session_state.get('target_date', default_target_date))
 
-        c_m1, c_m2 = st.columns([1.2, 2.8])
+        c_m1, c_m2 = st.columns([1.0, 3.0])
         with c_m1:
             month_options = [10, 11, 12, 1]
             month_labels = {10: "2026년 10월", 11: "2026년 11월 (당월)", 12: "2026년 12월", 1: "2027년 1월"}
@@ -1424,6 +1431,11 @@ elif menu == "6. 캘린더":
         month_matrix = cal_instance.monthdayscalendar(cur_year, selected_m)
         num_days = calendar.monthrange(cur_year, selected_m)[1]
         day_supply_map = {d: {'total': 0, 'total_rev': 0.0, 'items': []} for d in range(1, num_days + 1)}
+
+        cum_plan_qty = 0
+        cum_plan_rev = 0.0
+        cum_act_qty = 0
+        cum_act_rev = 0.0
 
         for r_item in fcst_rows:
             m_name = r_item['모델명']
@@ -1443,6 +1455,16 @@ elif menu == "6. 캘린더":
                         'model': m_name, 'gh_code': gh, 'site': site, 'qty': q, 'price': price, 'rev_ok': rev_val
                     })
 
+        # 기준일자 누계 계산 로직
+        for d in range(1, num_days + 1):
+            if selected_m < t_m or (selected_m == t_m and d <= t_d):
+                cum_plan_qty += day_supply_map[d]['total']
+                cum_plan_rev += day_supply_map[d]['total_rev']
+                
+                act_day_data = actual_by_day.get(d, {'qty': 0, 'rev': 0.0})
+                cum_act_qty += act_day_data['qty']
+                cum_act_rev += act_day_data['rev']
+
         m_total_qty = sum(day_supply_map[d]['total'] for d in day_supply_map)
         m_total_rev = sum(day_supply_map[d]['total_rev'] for d in day_supply_map)
         supply_days_cnt = sum(1 for d in day_supply_map if day_supply_map[d]['total'] > 0)
@@ -1454,6 +1476,15 @@ elif menu == "6. 캘린더":
                 
         top_m_name = max(m_model_totals, key=m_model_totals.get) if m_model_totals else "-"
         top_m_qty = m_model_totals.get(top_m_name, 0)
+
+        # [기능 2] 캘린더 내 누계 달성률 색상 및 카드 렌더링
+        achieve_rate_qty = (cum_act_qty / cum_plan_qty * 100) if cum_plan_qty > 0 else 0.0
+        achieve_rate_rev = (cum_act_rev / cum_plan_rev * 100) if cum_plan_rev > 0 else 0.0
+        
+        def get_rate_color(rate):
+            if rate >= 100: return "#4f46e5"
+            elif rate >= 80: return "#059669"
+            else: return "#f43f5e"
 
         with c_m2:
             render_html(f"""
@@ -1476,6 +1507,34 @@ elif menu == "6. 캘린더":
                 <div style="text-align: center;">
                     <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;">최대 공급 모델</div>
                     <div style="font-size: 16px; font-weight: 900; color: #0d9488; margin-top: 4px; letter-spacing: -0.3px;">{top_m_name} ({format_k(top_m_qty)})</div>
+                </div>
+            </div>
+            
+            <div style="background: linear-gradient(90deg, #f8fafc, #f1f5f9); border: 1px solid #e2e8f0; padding: 12px 20px; border-radius: 16px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); display: flex; justify-content: space-around; align-items: center; margin-top: 10px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 18px;">🎯</span>
+                    <div>
+                        <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 0.5px;">기준일({t_m}/{t_d}) 누계 출하수량</div>
+                        <div style="font-size: 16px; font-weight: 900; color: #0f172a; margin-top: 2px;">{format_k(cum_act_qty)} <span style="font-size: 12px; font-weight: 600; color: #94a3b8;">/ {format_k(cum_plan_qty)}</span></div>
+                    </div>
+                </div>
+                <div style="border-left: 1px solid #cbd5e1; height: 28px;"></div>
+                <div style="text-align: center;">
+                    <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 0.5px;">수량 달성률</div>
+                    <div style="font-size: 18px; font-weight: 900; color: {get_rate_color(achieve_rate_qty)}; margin-top: 2px;">{achieve_rate_qty:.1f}%</div>
+                </div>
+                <div style="border-left: 1px solid #cbd5e1; height: 28px;"></div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 18px;">💳</span>
+                    <div>
+                        <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 0.5px;">기준일({t_m}/{t_d}) 누계 예상매출</div>
+                        <div style="font-size: 16px; font-weight: 900; color: #0f172a; margin-top: 2px;">{cum_act_rev:,.2f}억 <span style="font-size: 12px; font-weight: 600; color: #94a3b8;">/ {cum_plan_rev:,.2f}억</span></div>
+                    </div>
+                </div>
+                <div style="border-left: 1px solid #cbd5e1; height: 28px;"></div>
+                <div style="text-align: center;">
+                    <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 0.5px;">매출 달성률</div>
+                    <div style="font-size: 18px; font-weight: 900; color: {get_rate_color(achieve_rate_rev)}; margin-top: 2px;">{achieve_rate_rev:.1f}%</div>
                 </div>
             </div>
             """)
