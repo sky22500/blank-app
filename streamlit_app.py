@@ -125,8 +125,8 @@ if 'data_loaded' not in st.session_state:
 
 default_kpis = {
     'daily': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pending_gr_rev': 0.0},
-    'weekly': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0, 'pending_gr_rev': 0.0},
-    'monthly': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0, 'pending_gr_rev': 0.0}
+    'weekly': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0, 'pending_gr_rev': 0.0, 'carryover_qty': 0},
+    'monthly': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0, 'pending_gr_rev': 0.0, 'carryover_qty': 0}
 }
 if 'kpi_data' not in st.session_state:
     st.session_state['kpi_data'] = default_kpis
@@ -136,6 +136,7 @@ else:
             st.session_state['kpi_data'][period] = default_kpis[period]
         else:
             st.session_state['kpi_data'][period].setdefault('pending_gr_rev', 0.0)
+            st.session_state['kpi_data'][period].setdefault('carryover_qty', 0)
 
 default_charts = {
     'daily_models': [], 'daily_prod_p': [], 'daily_prod_a': [], 
@@ -248,8 +249,10 @@ def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption
         bg_accent = "linear-gradient(90deg, #f43f5e, #be123c)"
     elif category == "출하":
         bg_accent = "linear-gradient(90deg, #3b82f6, #1d4ed8)"
-    elif category == "매출":
-        bg_accent = "linear-gradient(90deg, #10b981, #047857)"
+    elif category == "확정매출":
+        bg_accent = "linear-gradient(90deg, #14b8a6, #0d9488)"
+    elif category == "전체매출":
+        bg_accent = "linear-gradient(90deg, #6366f1, #4f46e5)"
     else:
         bg_accent = "linear-gradient(90deg, #cbd5e1, #94a3b8)"
 
@@ -259,7 +262,7 @@ def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption
         diff = actual_val - plan_val
         if diff > 0:
             diff_str = f"+{diff:,.2f}억원"
-            diff_color = "#10b981"
+            diff_color = "#10b981" if category == "확정매출" else "#4f46e5"
         elif diff < 0:
             diff_str = f"-{abs(diff):,.2f}억원"
             diff_color = "#f43f5e"
@@ -272,7 +275,7 @@ def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption
         diff = actual_val - plan_val
         if diff > 0:
             diff_str = f"+{format_k(diff)}"
-            diff_color = "#4f46e5"
+            diff_color = "#2563eb"
         elif diff < 0:
             diff_str = f"-{format_k(abs(diff))}"
             diff_color = "#f43f5e"
@@ -304,11 +307,11 @@ def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption
         <div style="display: flex; justify-content: space-between; align-items: baseline;">
             <div>
                 <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 4px;">실적</div>
-                <div style="font-size: 32px; font-weight: 900; color: #0f172a; line-height: 1; letter-spacing: -1px;">{act_str}</div>
+                <div style="font-size: 30px; font-weight: 900; color: #0f172a; line-height: 1; letter-spacing: -1px;">{act_str}</div>
             </div>
             <div style="text-align: right;">
                 <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 4px;">계획</div>
-                <div style="font-size: 20px; font-weight: 700; color: #64748b; line-height: 1; letter-spacing: -0.5px;">{plan_str}</div>
+                <div style="font-size: 18px; font-weight: 700; color: #64748b; line-height: 1; letter-spacing: -0.5px;">{plan_str}</div>
             </div>
         </div>
         {sub_html}
@@ -325,10 +328,14 @@ def render_achievement_gauge(title, actual, plan, unit="K", category=None):
         bar_gradient = "linear-gradient(90deg, #3b82f6, #1d4ed8)"
         badge_color = "#2563eb"
         shadow_color = "rgba(37, 99, 235, 0.3)"
-    elif category == "매출":
-        bar_gradient = "linear-gradient(90deg, #10b981, #047857)"
-        badge_color = "#059669"
-        shadow_color = "rgba(5, 150, 105, 0.3)"
+    elif category == "확정매출":
+        bar_gradient = "linear-gradient(90deg, #14b8a6, #0d9488)"
+        badge_color = "#0d9488"
+        shadow_color = "rgba(20, 184, 166, 0.3)"
+    elif category == "전체매출":
+        bar_gradient = "linear-gradient(90deg, #6366f1, #4f46e5)"
+        badge_color = "#4f46e5"
+        shadow_color = "rgba(79, 70, 229, 0.3)"
     else:
         bar_gradient = "linear-gradient(90deg, #d97706, #f59e0b)"
         badge_color = "#d97706"
@@ -563,11 +570,16 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
             if any(k in val for k in ['업체명', 'SITE', '거래선']) and not site_col: site_col = c; header_row = r
             if any(k in val for k in ['구분', 'TYPE']) and not gubun_col: gubun_col = c; header_row = r
     gh_col, model_col, site_col, gubun_col = gh_col or 1, model_col or 3, site_col or 4, gubun_col or 6
+    
     carryover_col = 6
+    carryover_qty_col = 5
     for c in range(1, 12):
         v_h1 = str(safe_cell(sheet, 1, c) or "") + str(safe_cell(sheet, 2, c) or "")
         if ('이월' in v_h1 or '전월' in v_h1) and ('KRW' in v_h1 or '원화' in v_h1 or '금액' in v_h1):
-            carryover_col = c; break
+            carryover_col = c
+        if ('이월' in v_h1 or '전월' in v_h1) and ('수량' in v_h1 or 'QTY' in v_h1):
+            carryover_qty_col = c
+            
     day_map = {}
     for c in range(1, sheet.max_column + 1):
         for r in range(1, header_row + 2):
@@ -591,7 +603,10 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
     model_data, site_data = {}, {}
     curr_gh, curr_model, curr_site = "", "", ""
     learned_prices, learned_suffix_prices, learned_model_prices = {}, {}, {}
+    
     total_carryover_krw = 0.0
+    total_carryover_qty = 0
+    
     day_actual_totals = {d: {'qty': 0, 'rev': 0.0, 'items': []} for d in day_map}
     for r in range(header_row + 2, sheet.max_row + 1):
         v_gh = safe_cell(sheet, r, gh_col)
@@ -601,13 +616,23 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
         if v_gh: curr_gh = str(v_gh).strip()
         if v_mdl: curr_model = str(v_mdl).strip()
         if v_ste: curr_site = str(v_ste).strip()
+        
         val_f = str(safe_cell(sheet, r, carryover_col) or 0).replace(',', '').strip()
         try: f_krw = float(val_f) if val_f else 0.0
         except: f_krw = 0.0
+        
+        val_q = str(safe_cell(sheet, r, carryover_qty_col) or 0).replace(',', '').strip()
+        try: f_qty = int(float(val_q)) if val_q else 0
+        except: f_qty = 0
+
         is_summary = any(k in (str(v_gh) + str(v_mdl) + str(v_ste) + clean_gbn) for k in ['합계', '누계', '지지품', '총계', '총합', '차이'])
-        if f_krw > 0 and not is_summary:
-            total_carryover_krw += f_krw
+        
+        if not is_summary:
+            if f_krw > 0: total_carryover_krw += f_krw
+            if f_qty > 0: total_carryover_qty += f_qty
+
         if is_summary: continue
+        
         if clean_gbn == '실적':
             base_model = curr_model[:-1] if curr_model.endswith('E') else curr_model
             gh_clean = clean_key(curr_gh)
@@ -635,6 +660,7 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
                     if base_model: learned_model_prices[clean_key(base_model)] = u_price
                 try: w_lbl = f"W{datetime.date(2026, t_month, d).isocalendar()[1]}"
                 except: w_lbl = 'W45'
+                
                 if d <= t_day:
                     weekly_ship_actual[w_lbl] = weekly_ship_actual.get(w_lbl, 0) + q_val
                     weekly_rev_actual[w_lbl] = weekly_rev_actual.get(w_lbl, 0.0) + rev_ok
@@ -649,6 +675,7 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
                     if curr_site not in site_data: site_data[curr_site] = {'Actual': 0, 'Rev_Act': 0.0}
                     site_data[curr_site]['Actual'] += q_val
                     site_data[curr_site]['Rev_Act'] += rev_ok
+                    
     if total_carryover_krw == 0:
         for r in range(max(1, sheet.max_row - 15), sheet.max_row + 1):
             val_f = str(safe_cell(sheet, r, carryover_col) or 0).replace(',', '').strip()
@@ -657,6 +684,16 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
                 if v_num > 100000000:
                     total_carryover_krw = max(total_carryover_krw, v_num)
             except: pass
+            
+    if total_carryover_qty == 0:
+        for r in range(max(1, sheet.max_row - 15), sheet.max_row + 1):
+            val_q = str(safe_cell(sheet, r, carryover_qty_col) or 0).replace(',', '').strip()
+            try:
+                v_num = int(float(val_q))
+                if v_num > 1000:
+                    total_carryover_qty = max(total_carryover_qty, v_num)
+            except: pass
+
     carryover_rev_ok = round(total_carryover_krw / 100_000_000.0, 2)
     for k, v in learned_prices.items():
         if k not in mapping_data['gh_map'] or mapping_data['gh_map'][k] == 0: mapping_data['gh_map'][k] = v
@@ -664,10 +701,12 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
         if k not in mapping_data['suffix_map'] or mapping_data['suffix_map'][k] == 0: mapping_data['suffix_map'][k] = v
     for k, v in learned_model_prices.items():
         if k not in mapping_data['model_map'] or mapping_data['model_map'][k] == 0: mapping_data['model_map'][k] = v
+        
     return {
         'daily_ship_a': daily_ship_a,
         'daily_rev_a': round(daily_rev_a, 2),
         'carryover_rev_ok': carryover_rev_ok,
+        'carryover_qty_ok': total_carryover_qty,
         'day_actual_totals': day_actual_totals,
         'weekly_ship_actual': weekly_ship_actual,
         'weekly_rev_actual': {k: round(v, 2) for k, v in weekly_rev_actual.items()},
@@ -771,7 +810,6 @@ def parse_rtf_main_plan_excel(file_bytes, target_date_str, mapping_data, exchang
         'fcst_rows': fcst_rows, 'fcst_date_cols': fcst_date_cols
     }
 
-# 3-5. [수정] 미입고(GR) 인보이스 내역 파싱 엔진 (기준일 무관, BL No 필수 조건)
 def parse_pending_gr_excel(file_bytes, target_date_str, exchange_rate=1350.0):
     try:
         df = pd.read_excel(file_bytes)
@@ -787,10 +825,8 @@ def parse_pending_gr_excel(file_bytes, target_date_str, exchange_rate=1350.0):
         pending_sum_krw = 0.0
         for _, row in df.iterrows():
             gr_val = row[gr_date_col]
-            # 조건 1: GR Date가 공란인 경우
             if pd.isna(gr_val) or str(gr_val).strip().lower() in ["", "nan", "nat", "none", "null"]:
                 bl_val = row[bl_col]
-                # 조건 2: Bill of Lading No에 데이터가 있는 경우만 합산
                 if pd.notna(bl_val) and str(bl_val).strip().lower() not in ["", "nan", "none", "null"]:
                     amt = row[inv_amt_col]
                     try:
@@ -814,105 +850,33 @@ render_html("""
         letter-spacing: -0.2px;
     }
     
-    .stApp { 
-        background-color: #f8fafc; 
-        color: #0f172a; 
-    }
+    .stApp { background-color: #f8fafc; color: #0f172a; }
     
-    section[data-testid="stSidebar"] { 
-        background-color: #0f172a; 
-        border-right: 1px solid #1e293b; 
-    }
-    section[data-testid="stSidebar"] * { 
-        color: #cbd5e1 !important; 
-    }
-    section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
-        color: #ffffff !important;
-    }
+    section[data-testid="stSidebar"] { background-color: #0f172a; border-right: 1px solid #1e293b; }
+    section[data-testid="stSidebar"] * { color: #cbd5e1 !important; }
+    section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 { color: #ffffff !important; }
     
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 6px;
-        background-color: #e2e8f0;
-        padding: 4px;
-        border-radius: 12px;
-        border: none;
-        margin-bottom: 24px;
-    }
-    .stTabs [data-baseweb="tab"] { 
-        background-color: transparent; 
-        border: none; 
-        border-radius: 8px; 
-        padding: 10px 24px; 
-        font-weight: 700; 
-        font-size: 14.5px;
-        color: #64748b; 
-        box-shadow: none;
-        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .stTabs [aria-selected="true"] { 
-        background-color: #ffffff !important; 
-        color: #0f172a !important; 
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
-    }
+    .stTabs [data-baseweb="tab-list"] { gap: 6px; background-color: #e2e8f0; padding: 4px; border-radius: 12px; border: none; margin-bottom: 24px; }
+    .stTabs [data-baseweb="tab"] { background-color: transparent; border: none; border-radius: 8px; padding: 10px 24px; font-weight: 700; font-size: 14.5px; color: #64748b; box-shadow: none; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+    .stTabs [aria-selected="true"] { background-color: #ffffff !important; color: #0f172a !important; box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important; }
     
     .date-badge {
-        background: rgba(255, 255, 255, 0.7);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.5);
-        padding: 8px 18px;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        font-weight: 700;
-        font-size: 14px;
-        color: #475569;
-        margin-bottom: 24px;
-        border-radius: 30px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+        background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.5); padding: 8px 18px; display: inline-flex; align-items: center; gap: 8px;
+        font-weight: 700; font-size: 14px; color: #475569; margin-bottom: 24px; border-radius: 30px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
     }
     
-    .cal-card-wrapper {
-        position: relative;
-        margin-bottom: 10px;
-    }
-    .cal-card {
-        min-height: 110px;
-        border-radius: 12px;
-        padding: 12px;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        cursor: pointer;
-    }
-    .cal-card-wrapper:hover .cal-card {
-        transform: translateY(-4px) scale(1.01);
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
-        border-color: #cbd5e1 !important;
-        z-index: 10;
-    }
+    .cal-card-wrapper { position: relative; margin-bottom: 10px; }
+    .cal-card { min-height: 110px; border-radius: 12px; padding: 12px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; }
+    .cal-card-wrapper:hover .cal-card { transform: translateY(-4px) scale(1.01); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important; border-color: #cbd5e1 !important; z-index: 10; }
     
     .cal-hover-popup {
-        display: none;
-        position: absolute;
-        top: calc(100% + 5px);
-        width: 340px;
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border: 1px solid rgba(0,0,0,0.08);
-        border-radius: 16px;
-        padding: 18px;
-        box-shadow: 0 20px 40px -8px rgba(0, 0, 0, 0.15);
-        z-index: 999999;
-        pointer-events: none;
+        display: none; position: absolute; top: calc(100% + 5px); width: 340px;
+        background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(0,0,0,0.08); border-radius: 16px; padding: 18px; box-shadow: 0 20px 40px -8px rgba(0, 0, 0, 0.15); z-index: 999999; pointer-events: none;
     }
-    .cal-card-wrapper:hover .cal-hover-popup {
-        display: block;
-        animation: fadeIn 0.2s ease-out forwards;
-    }
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(-10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
+    .cal-card-wrapper:hover .cal-hover-popup { display: block; animation: fadeIn 0.2s ease-out forwards; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
     
     .pos-left { left: 0; transform: none; }
     .pos-center { left: 50%; transform: translateX(-50%); }
@@ -1036,14 +1000,19 @@ if menu == "7. 데이터 관리 (Admin)":
                         s_act = parse_new_shipment_actual_excel(ship_actual_file, target_date_input, st.session_state['mapping_data'])
                         if s_act:
                             carryover = s_act['carryover_rev_ok']
+                            carry_qty = s_act.get('carryover_qty_ok', 0)
                             pending_gr = st.session_state['kpi_data']['monthly'].get('pending_gr_rev', 0.0)
                             
-                            st.session_state['kpi_data']['daily']['ship_a'] = s_act['daily_ship_a']
+                            st.session_state['kpi_data']['daily']['ship_a'] = s_act['daily_ship_a'] + carry_qty
                             st.session_state['kpi_data']['daily']['rev_a'] = s_act['daily_rev_a']
                             st.session_state['actual_by_day'] = s_act['day_actual_totals']
                             
                             w_labels = st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
-                            w_ship_a = [s_act['weekly_ship_actual'].get(w, 0) for w in w_labels]
+                            w_ship_a = []
+                            for idx, w in enumerate(w_labels):
+                                pure_q = s_act['weekly_ship_actual'].get(w, 0)
+                                if idx == 0: w_ship_a.append(pure_q + carry_qty)
+                                else: w_ship_a.append(pure_q)
                             
                             w_rev_a = []
                             for idx, w in enumerate(w_labels):
@@ -1059,21 +1028,23 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.session_state['kpi_data']['weekly']['ship_a'] = sum(w_ship_a)
                             st.session_state['kpi_data']['weekly']['pure_rev_a'] = round(pure_weekly_rev, 2)
                             st.session_state['kpi_data']['weekly']['carryover_rev'] = carryover
+                            st.session_state['kpi_data']['weekly']['carryover_qty'] = carry_qty
                             st.session_state['kpi_data']['weekly']['rev_a'] = round(pure_weekly_rev + carryover + pending_gr, 2)
                             
                             pure_monthly_rev = s_act['monthly_rev_actual']
-                            st.session_state['kpi_data']['monthly']['ship_a'] = s_act['monthly_ship_actual']
+                            st.session_state['kpi_data']['monthly']['ship_a'] = s_act['monthly_ship_actual'] + carry_qty
                             st.session_state['kpi_data']['monthly']['pure_rev_a'] = pure_monthly_rev
                             st.session_state['kpi_data']['monthly']['carryover_rev'] = carryover
+                            st.session_state['kpi_data']['monthly']['carryover_qty'] = carry_qty
                             st.session_state['kpi_data']['monthly']['rev_a'] = round(pure_monthly_rev + carryover + pending_gr, 2)
-                            st.session_state['chart_data']['monthly_ship_a'] = [s_act['monthly_ship_actual']]
+                            st.session_state['chart_data']['monthly_ship_a'] = [s_act['monthly_ship_actual'] + carry_qty]
                             st.session_state['chart_data']['monthly_rev_a'] = [round(pure_monthly_rev + carryover + pending_gr, 2)]
                             
                             st.session_state['_ship_actual_by_model'] = s_act['actual_by_model']
                             st.session_state['_ship_actual_by_site'] = s_act['actual_by_site']
                             
                             st.session_state['data_loaded'] = True
-                            st.success(f"✅ 출하 실적 반영 완료! (이월 매출: {carryover:,.2f}억원)")
+                            st.success(f"✅ 출하 실적 반영 완료! (이월 수량: {format_k(carry_qty)} / 이월 매출: {carryover:,.2f}억원)")
                     except Exception as e: st.error(f"출하 실적 파싱 오류: {e}")
 
             if gr_file:
@@ -1270,17 +1241,30 @@ elif menu == "🏠 현황":
     tab_monthly, tab_weekly, tab_daily = st.tabs(["🗓️ Monthly", "📊 Weekly", "📅 Daily"])
 
     with tab_monthly:
-        m1, m2, m3 = st.columns(3)
+        m1, m2, m3, m4 = st.columns(4)
+        
+        m_pure = kpi['monthly'].get('pure_rev_a', 0.0)
+        m_carry = kpi['monthly'].get('carryover_rev', 0.0)
+        m_pending = kpi['monthly'].get('pending_gr_rev', 0.0)
+        
+        m_confirmed_rev = round(m_pure + m_carry, 2)
+        m_total_rev = round(m_confirmed_rev + m_pending, 2)
+        
         with m1: 
             render_kpi_card("월간 생산 누계", "🏭", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], category="생산")
             render_achievement_gauge("생산", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], unit="K", category="생산")
         with m2: 
-            render_kpi_card("월간 출하 누계", "🚚", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], category="출하")
+            ship_sub = f"출하실적 {format_k(kpi['monthly']['ship_a'] - kpi['monthly'].get('carryover_qty', 0))} + 이월 {format_k(kpi['monthly'].get('carryover_qty', 0))}"
+            render_kpi_card("월간 출하 누계", "🚚", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], sub_caption=ship_sub, category="출하")
             render_achievement_gauge("출하", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], unit="K", category="출하")
         with m3: 
-            rev_sub = f"실적 {kpi['monthly'].get('pure_rev_a', 0.0):,.2f}억 + 이월 {kpi['monthly'].get('carryover_rev', 0.0):,.2f}억 + 입고전(해외) {kpi['monthly'].get('pending_gr_rev', 0.0):,.2f}억"
-            render_kpi_card("월간 매출 누계", "💰", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], is_rev=True, sub_caption=rev_sub, category="매출")
-            render_achievement_gauge("매출", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], unit="억원", category="매출")
+            rev_sub = f"당월 출하실적 {m_pure:,.2f}억 + 이월 {m_carry:,.2f}억"
+            render_kpi_card("확정 매출액", "💳", m_confirmed_rev, kpi['monthly']['rev_p'], is_rev=True, sub_caption=rev_sub, category="확정매출")
+            render_achievement_gauge("확정매출", m_confirmed_rev, kpi['monthly']['rev_p'], unit="억원", category="확정매출")
+        with m4:
+            rev_total_sub = f"확정 {m_confirmed_rev:,.2f}억 + 입고전(해외) {m_pending:,.2f}억"
+            render_kpi_card("예상 매출액 (TOTAL)", "💰", m_total_rev, kpi['monthly']['rev_p'], is_rev=True, sub_caption=rev_total_sub, category="전체매출")
+            render_achievement_gauge("예상매출", m_total_rev, kpi['monthly']['rev_p'], unit="억원", category="전체매출")
 
         mch1, mch2, mch3 = st.columns(3)
         m_months = cdata.get('monthly_months', ['11월'])
@@ -1289,20 +1273,33 @@ elif menu == "🏠 현황":
         with mch2:
             st.plotly_chart(create_active_chart("월별 출하 실적", m_months, cdata.get('monthly_ship_p', [0]), cdata.get('monthly_ship_a', [0]), unit="K"), use_container_width=True)
         with mch3:
-            st.plotly_chart(create_active_chart("월별 매출 실적", m_months, cdata.get('monthly_rev_p', [0.0]), cdata.get('monthly_rev_a', [0.0]), unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("월별 매출 실적", m_months, cdata.get('monthly_rev_p', [0.0]), [m_total_rev], unit="억원"), use_container_width=True)
 
     with tab_weekly:
-        wk1, wk2, wk3 = st.columns(3)
+        wk1, wk2, wk3, wk4 = st.columns(4)
+        
+        w_pure = kpi['weekly'].get('pure_rev_a', 0.0)
+        w_carry = kpi['weekly'].get('carryover_rev', 0.0)
+        w_pending = kpi['weekly'].get('pending_gr_rev', 0.0)
+        
+        w_confirmed_rev = round(w_pure + w_carry, 2)
+        w_total_rev = round(w_confirmed_rev + w_pending, 2)
+        
         with wk1: 
             render_kpi_card("주간 생산 누계", "🏭", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], category="생산")
             render_achievement_gauge("생산", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], unit="K", category="생산")
         with wk2: 
-            render_kpi_card("주간 출하 누계", "🚚", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], category="출하")
+            ship_sub = f"출하실적 {format_k(kpi['weekly']['ship_a'] - kpi['weekly'].get('carryover_qty', 0))} + 이월 {format_k(kpi['weekly'].get('carryover_qty', 0))}"
+            render_kpi_card("주간 출하 누계", "🚚", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], sub_caption=ship_sub, category="출하")
             render_achievement_gauge("출하", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], unit="K", category="출하")
         with wk3: 
-            rev_sub = f"실적 {kpi['weekly'].get('pure_rev_a', 0.0):,.2f}억 + 이월 {kpi['weekly'].get('carryover_rev', 0.0):,.2f}억 + 입고전(해외) {kpi['weekly'].get('pending_gr_rev', 0.0):,.2f}억"
-            render_kpi_card("주간 매출 누계", "💰", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], is_rev=True, sub_caption=rev_sub, category="매출")
-            render_achievement_gauge("매출", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], unit="억원", category="매출")
+            rev_sub = f"주간 출하실적 {w_pure:,.2f}억 + 이월 {w_carry:,.2f}억"
+            render_kpi_card("확정 매출액", "💳", w_confirmed_rev, kpi['weekly']['rev_p'], is_rev=True, sub_caption=rev_sub, category="확정매출")
+            render_achievement_gauge("확정매출", w_confirmed_rev, kpi['weekly']['rev_p'], unit="억원", category="확정매출")
+        with wk4:
+            rev_total_sub = f"확정 {w_confirmed_rev:,.2f}억 + 입고전(해외) {w_pending:,.2f}억"
+            render_kpi_card("예상 매출액 (TOTAL)", "💰", w_total_rev, kpi['weekly']['rev_p'], is_rev=True, sub_caption=rev_total_sub, category="전체매출")
+            render_achievement_gauge("예상매출", w_total_rev, kpi['weekly']['rev_p'], unit="억원", category="전체매출")
 
         wch1, wch2, wch3 = st.columns(3)
         w_weeks = cdata.get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
@@ -1316,14 +1313,14 @@ elif menu == "🏠 현황":
     with tab_daily:
         k1, k2, k3 = st.columns(3)
         with k1: 
-            render_kpi_card("생산 (TOTAL)", "🏭", kpi['daily']['prod_a'], kpi['daily']['prod_p'], category="생산")
+            render_kpi_card("당일 생산 (TOTAL)", "🏭", kpi['daily']['prod_a'], kpi['daily']['prod_p'], category="생산")
             render_achievement_gauge("생산", kpi['daily']['prod_a'], kpi['daily']['prod_p'], unit="K", category="생산")
         with k2: 
-            render_kpi_card("출하 (TOTAL)", "🚚", kpi['daily']['ship_a'], kpi['daily']['ship_p'], category="출하")
+            render_kpi_card("당일 출하 (TOTAL)", "🚚", kpi['daily']['ship_a'], kpi['daily']['ship_p'], category="출하")
             render_achievement_gauge("출하", kpi['daily']['ship_a'], kpi['daily']['ship_p'], unit="K", category="출하")
         with k3: 
-            render_kpi_card("매출 (TOTAL)", "💰", kpi['daily']['rev_a'], kpi['daily']['rev_p'], is_rev=True, category="매출")
-            render_achievement_gauge("매출", kpi['daily']['rev_a'], kpi['daily']['rev_p'], unit="억원", category="매출")
+            render_kpi_card("당일 예상 매출액 (TOTAL)", "💰", kpi['daily']['rev_a'], kpi['daily']['rev_p'], is_rev=True, category="전체매출")
+            render_achievement_gauge("매출", kpi['daily']['rev_a'], kpi['daily']['rev_p'], unit="억원", category="전체매출")
 
         ch1, ch2, ch3 = st.columns(3)
         with ch1:
