@@ -165,6 +165,9 @@ if not st.session_state.get('data_loaded'):
     if saved_state:
         for k, v in saved_state.items():
             st.session_state[k] = v
+            # JSON 동기화 시 캘린더 매칭을 위해 일자(key)를 정수형(int)으로 강제 변환
+            if k == "actual_by_day" and isinstance(v, dict):
+                st.session_state["actual_by_day"] = {int(day): data for day, data in v.items()}
 
 # 유틸 함수
 def safe_cell(sheet, r, c):
