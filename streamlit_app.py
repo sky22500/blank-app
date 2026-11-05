@@ -887,7 +887,7 @@ render_html("""
 </style>
 """)
 
-# 5. 사이드바 (업데이트 로직 수정)
+# 5. 사이드바
 with st.sidebar:
     menu = st.radio("📂 Folder", (
         "🏠 현황", "1. 모델별 출하실적", "2. 모델별 생산실적", 
@@ -896,7 +896,6 @@ with st.sidebar:
     ))
     
     st.markdown("---")
-    # 버튼 클릭 시에도 캘린더 날짜 키(Int) 강제 변환 적용
     if st.button("🔄 최신 실적 불러오기", use_container_width=True):
         fetch_db_state_cached.clear()
         latest = fetch_db_state_cached()
@@ -1174,48 +1173,100 @@ if menu == "7. 데이터 관리 (Admin)":
         if secret_pw == "7777":
             st.markdown("""
             <div style="background: #fff1f2; border: 1px solid #fecdd3; padding: 18px; border-radius: 12px; margin-bottom: 20px;">
-                <h3 style="color: #e11d48; margin: 0 0 8px 0; font-weight: 900; letter-spacing: -0.5px;">🚨 [SECRET] 경영 보고용 실적 수동 강제 보정</h3>
-                <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">※ 엑셀 원본 데이터와 무관하게 대시보드 <strong>메인 화면의 KPI(생산/출하/매출) 실적 숫자</strong>를 강제로 덮어씌웁니다.<br>※ 아래 버튼을 누르면 모든 팀원의 화면에도 <strong>입력하신 숫자</strong>로 즉시 동기화됩니다.</p>
+                <h3 style="color: #e11d48; margin: 0 0 8px 0; font-weight: 900; letter-spacing: -0.5px;">🚨 [SECRET] 경영 보고용 실적 엑셀형 직접 편집</h3>
+                <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">※ 아래 표의 셀을 더블 클릭하여 <strong>원하는 숫자로 직접 수정</strong>하세요. (엑셀처럼 동작합니다.)<br>※ 수정 후 하단의 저장 버튼을 누르면 <strong>모든 팀원의 화면과 차트에 수정된 데이터가 즉시 강제 송출</strong>됩니다.</p>
             </div>
             """, unsafe_allow_html=True)
             
             kpi_temp = st.session_state['kpi_data']
             
-            st.markdown("<h5 style='color: #0f172a; margin-bottom: 10px;'>1. 당일 (Daily) 실적 강제 보정</h5>", unsafe_allow_html=True)
-            d1, d2, d3 = st.columns(3)
-            with d1: new_d_prod = st.number_input("당일 생산 수량 (개)", value=int(kpi_temp['daily']['prod_a']), step=1000)
-            with d2: new_d_ship = st.number_input("당일 출하 수량 (개)", value=int(kpi_temp['daily']['ship_a']), step=1000)
-            with d3: new_d_rev = st.number_input("당일 매출 (억원)", value=float(kpi_temp['daily']['rev_a']), step=0.1, format="%.2f")
+            # 1. 요약 KPI 편집 데이터프레임
+            kpi_df = pd.DataFrame([
+                {"구분": "당일 (Daily)", "생산실적(개)": int(kpi_temp['daily'].get('prod_a', 0)), "출하실적(개)": int(kpi_temp['daily'].get('ship_a', 0)), "매출실적(억원)": float(kpi_temp['daily'].get('rev_a', 0.0))},
+                {"구분": "주간 (Weekly)", "생산실적(개)": int(kpi_temp['weekly'].get('prod_a', 0)), "출하실적(개)": int(kpi_temp['weekly'].get('ship_a', 0)), "매출실적(억원)": float(kpi_temp['weekly'].get('rev_a', 0.0))},
+                {"구분": "월간 (Monthly)", "생산실적(개)": int(kpi_temp['monthly'].get('prod_a', 0)), "출하실적(개)": int(kpi_temp['monthly'].get('ship_a', 0)), "매출실적(억원)": float(kpi_temp['monthly'].get('rev_a', 0.0))}
+            ])
             
-            st.markdown("<h5 style='color: #0f172a; margin-top: 20px; margin-bottom: 10px;'>2. 주간 (Weekly) 누계 실적 강제 보정</h5>", unsafe_allow_html=True)
-            w1, w2, w3 = st.columns(3)
-            with w1: new_w_prod = st.number_input("주간 생산 수량 (개)", value=int(kpi_temp['weekly']['prod_a']), step=1000)
-            with w2: new_w_ship = st.number_input("주간 출하 수량 (개)", value=int(kpi_temp['weekly']['ship_a']), step=1000)
-            with w3: new_w_rev = st.number_input("주간 매출 (억원)", value=float(kpi_temp['weekly']['rev_a']), step=0.1, format="%.2f")
+            st.markdown("<h5 style='color: #0f172a; margin-bottom: 10px;'>1. 핵심 지표 (Overview) 수동 편집</h5>", unsafe_allow_html=True)
+            edited_kpi = st.data_editor(kpi_df, use_container_width=True, hide_index=True)
             
-            st.markdown("<h5 style='color: #0f172a; margin-top: 20px; margin-bottom: 10px;'>3. 월간 (Monthly) 누계 실적 강제 보정</h5>", unsafe_allow_html=True)
-            m1, m2, m3 = st.columns(3)
-            with m1: new_m_prod = st.number_input("월간 생산 수량 (개)", value=int(kpi_temp['monthly']['prod_a']), step=1000)
-            with m2: new_m_ship = st.number_input("월간 출하 수량 (개)", value=int(kpi_temp['monthly']['ship_a']), step=1000)
-            with m3: new_m_rev = st.number_input("월간 매출 (억원)", value=float(kpi_temp['monthly']['rev_a']), step=0.1, format="%.2f")
+            # 2. 모델별 실적 편집 데이터프레임
+            st.markdown("<h5 style='color: #0f172a; margin-top: 25px; margin-bottom: 10px;'>2. 모델별 실적 수동 편집</h5>", unsafe_allow_html=True)
+            model_list = st.session_state['chart_data'].get('ship_by_model', [])
+            if model_list:
+                model_df = pd.DataFrame(model_list)[['모델명', '출하계획(개)', '출하실적(개)', '매출계획(억원)', '매출실적(억원)']]
+                edited_model = st.data_editor(model_df, num_rows="dynamic", use_container_width=True, hide_index=True)
+            else:
+                st.info("모델별 실적 데이터가 없습니다. 먼저 원본 엑셀을 분석해 주세요.")
+                edited_model = None
 
-            if st.button("⚠️ 수동 입력 수치로 덮어쓰기 및 전체 동기화", type="primary"):
-                st.session_state['kpi_data']['daily']['prod_a'] = new_d_prod
-                st.session_state['kpi_data']['daily']['ship_a'] = new_d_ship
-                st.session_state['kpi_data']['daily']['rev_a'] = new_d_rev
+            # 3. SITE별 실적 편집 데이터프레임
+            st.markdown("<h5 style='color: #0f172a; margin-top: 25px; margin-bottom: 10px;'>3. 출하 SITE별 실적 수동 편집</h5>", unsafe_allow_html=True)
+            site_list = st.session_state['chart_data'].get('ship_by_site', [])
+            if site_list:
+                site_df = pd.DataFrame(site_list)[['SITE', '출하계획(개)', '출하실적(개)', '매출계획(억원)', '매출실적(억원)']]
+                edited_site = st.data_editor(site_df, num_rows="dynamic", use_container_width=True, hide_index=True)
+            else:
+                st.info("SITE별 실적 데이터가 없습니다. 먼저 원본 엑셀을 분석해 주세요.")
+                edited_site = None
+
+            if st.button("⚠️ 입력한 데이터로 클라우드 덮어쓰기 및 전체 동기화", type="primary"):
+                # KPI 덮어쓰기
+                st.session_state['kpi_data']['daily']['prod_a'] = int(edited_kpi.loc[0, "생산실적(개)"])
+                st.session_state['kpi_data']['daily']['ship_a'] = int(edited_kpi.loc[0, "출하실적(개)"])
+                st.session_state['kpi_data']['daily']['rev_a'] = float(edited_kpi.loc[0, "매출실적(억원)"])
                 
-                st.session_state['kpi_data']['weekly']['prod_a'] = new_w_prod
-                st.session_state['kpi_data']['weekly']['ship_a'] = new_w_ship
-                st.session_state['kpi_data']['weekly']['rev_a'] = new_w_rev
+                st.session_state['kpi_data']['weekly']['prod_a'] = int(edited_kpi.loc[1, "생산실적(개)"])
+                st.session_state['kpi_data']['weekly']['ship_a'] = int(edited_kpi.loc[1, "출하실적(개)"])
+                st.session_state['kpi_data']['weekly']['rev_a'] = float(edited_kpi.loc[1, "매출실적(억원)"])
                 
-                st.session_state['kpi_data']['monthly']['prod_a'] = new_m_prod
-                st.session_state['kpi_data']['monthly']['ship_a'] = new_m_ship
-                st.session_state['kpi_data']['monthly']['rev_a'] = new_m_rev
+                st.session_state['kpi_data']['monthly']['prod_a'] = int(edited_kpi.loc[2, "생산실적(개)"])
+                st.session_state['kpi_data']['monthly']['ship_a'] = int(edited_kpi.loc[2, "출하실적(개)"])
+                st.session_state['kpi_data']['monthly']['rev_a'] = float(edited_kpi.loc[2, "매출실적(억원)"])
                 
-                st.session_state['chart_data']['monthly_prod_a'] = [new_m_prod]
-                st.session_state['chart_data']['monthly_ship_a'] = [new_m_ship]
-                st.session_state['chart_data']['monthly_rev_a'] = [new_m_rev]
+                # 월간 차트 업데이트
+                st.session_state['chart_data']['monthly_prod_a'] = [int(edited_kpi.loc[2, "생산실적(개)"])]
+                st.session_state['chart_data']['monthly_ship_a'] = [int(edited_kpi.loc[2, "출하실적(개)"])]
+                st.session_state['chart_data']['monthly_rev_a'] = [float(edited_kpi.loc[2, "매출실적(억원)"])]
+
+                # 모델별 데이터 업데이트 (비율 자동 재계산)
+                if edited_model is not None:
+                    new_model_list = []
+                    for _, r in edited_model.iterrows():
+                        p_qty = int(r.get('출하계획(개)', 0))
+                        a_qty = int(r.get('출하실적(개)', 0))
+                        p_rev = float(r.get('매출계획(억원)', 0.0))
+                        a_rev = float(r.get('매출실적(억원)', 0.0))
+                        qty_rate = round((a_qty / p_qty * 100), 1) if p_qty > 0 else 0.0
+                        rev_rate = round((a_rev / p_rev * 100), 1) if p_rev > 0 else 0.0
+                        
+                        new_model_list.append({
+                            '모델명': r['모델명'], '출하계획(개)': p_qty, '출하계획(K)': format_k(p_qty),
+                            '출하실적(개)': a_qty, '출하실적(K)': format_k(a_qty), '수량달성률(%)': qty_rate,
+                            '수량차질(K)': format_k(p_qty - a_qty), '매출계획(억원)': p_rev,
+                            '매출실적(억원)': a_rev, '매출달성률(%)': rev_rate
+                        })
+                    st.session_state['chart_data']['ship_by_model'] = new_model_list
                 
+                # SITE별 데이터 업데이트 (비율 자동 재계산)
+                if edited_site is not None:
+                    new_site_list = []
+                    for _, r in edited_site.iterrows():
+                        p_qty = int(r.get('출하계획(개)', 0))
+                        a_qty = int(r.get('출하실적(개)', 0))
+                        p_rev = float(r.get('매출계획(억원)', 0.0))
+                        a_rev = float(r.get('매출실적(억원)', 0.0))
+                        qty_rate = round((a_qty / p_qty * 100), 1) if p_qty > 0 else 0.0
+                        rev_rate = round((a_rev / p_rev * 100), 1) if p_rev > 0 else 0.0
+                        
+                        new_site_list.append({
+                            'SITE': r['SITE'], '출하계획(개)': p_qty, '출하계획(K)': format_k(p_qty),
+                            '출하실적(개)': a_qty, '출하실적(K)': format_k(a_qty), '수량달성률(%)': qty_rate,
+                            '수량차질(K)': format_k(p_qty - a_qty), '매출계획(억원)': p_rev,
+                            '매출실적(억원)': a_rev, '매출달성률(%)': rev_rate
+                        })
+                    st.session_state['chart_data']['ship_by_site'] = new_site_list
+
                 sync_keys = [
                     'target_date', 'kpi_data', 'chart_data', 'inventory_data',
                     'fcst_data', 'actual_by_day', 'mapping_data', 'data_loaded',
@@ -1225,7 +1276,7 @@ if menu == "7. 데이터 관리 (Admin)":
                 save_payload = {k: st.session_state[k] for k in sync_keys if k in st.session_state}
                 is_saved = save_state_to_gsheet(save_payload)
                 if is_saved:
-                    st.success("🎉 [시크릿 모드] 메인 화면의 실적 숫자가 수동 입력값으로 강제 변경 및 동기화되었습니다!")
+                    st.success("🎉 [시크릿 모드] 메인 화면과 상세 차트의 모든 숫자가 방금 편집한 수치로 완벽하게 덮어써졌습니다!")
                 else:
                     st.error("저장 실패")
 
