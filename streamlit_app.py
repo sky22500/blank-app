@@ -611,6 +611,7 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
     
     total_carryover_krw = 0.0
     total_carryover_qty = 0
+    carryover_list = []
     
     day_actual_totals = {d: {'qty': 0, 'rev': 0.0, 'items': []} for d in day_map}
     for r in range(header_row + 2, sheet.max_row + 1):
@@ -634,7 +635,9 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
         
         if not is_summary:
             if f_krw > 0: total_carryover_krw += f_krw
-            if f_qty > 0: total_carryover_qty += f_qty
+            if f_qty > 0: 
+                total_carryover_qty += f_qty
+                carryover_list.append({'gh': curr_gh, 'model': curr_model, 'qty': f_qty})
 
         if is_summary: continue
         
@@ -680,6 +683,41 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
                     if curr_site not in site_data: site_data[curr_site] = {'Actual': 0, 'Rev_Act': 0.0}
                     site_data[curr_site]['Actual'] += q_val
                     site_data[curr_site]['Rev_Act'] += rev_ok
+
+    if total_carryover_krw == 0 and total_carryover_qty > 0:
+        gh_map = mapping_data.get('gh_map', {})
+        suffix_map = mapping_data.get('suffix_map', {})
+        model_map = mapping_data.get('model_map', {})
+        
+        for k, v in learned_prices.items():
+            if k not in gh_map or gh_map[k] == 0: gh_map[k] = v
+        for k, v in learned_suffix_prices.items():
+            if k not in suffix_map or suffix_map[k] == 0: suffix_map[k] = v
+        for k, v in learned_model_prices.items():
+            if k not in model_map or model_map[k] == 0: model_map[k] = v
+            
+        known_prices = [p for p in list(gh_map.values()) + list(suffix_map.values()) + list(model_map.values()) if p > 0]
+        avg_price = (sum(known_prices) / len(known_prices)) if known_prices else 8800.0
+        
+        calc_krw = 0.0
+        for item in carryover_list:
+            q = item['qty']
+            gh_clean = clean_key(item['gh'])
+            gh_suf = get_gh_suffix(item['gh'])
+            b_mod = item['model'][:-1] if item['model'].endswith('E') else item['model']
+            mod_clean = clean_key(b_mod)
+            
+            p = gh_map.get(gh_clean, 0.0)
+            if p == 0: p = suffix_map.get(gh_suf, 0.0)
+            if p == 0: p = model_map.get(mod_clean, 0.0)
+            if p == 0:
+                for mk, mv in gh_map.items():
+                    if len(mk) >= 5 and (mk in gh_clean or gh_clean in mk or gh_suf in mk):
+                        p = mv; break
+            if p == 0: p = avg_price
+            
+            calc_krw += q * p
+        total_carryover_krw = calc_krw
                     
     if total_carryover_krw == 0:
         for r in range(max(1, sheet.max_row - 15), sheet.max_row + 1):
@@ -1011,6 +1049,7 @@ if menu == "7. 데이터 관리 (Admin)":
                             pending_gr = st.session_state['kpi_data']['monthly'].get('pending_gr_rev', 0.0)
                             
                             st.session_state['kpi_data']['daily']['ship_a'] = s_act['daily_ship_a'] + carry_qty
+                            st.session_state['kpi_data']['daily']['pure_rev_a'] = s_act['daily_rev_a']
                             st.session_state['kpi_data']['daily']['rev_a'] = s_act['daily_rev_a']
                             st.session_state['actual_by_day'] = s_act['day_actual_totals']
                             
@@ -1388,7 +1427,15 @@ elif menu == "🏠 현황":
             st.plotly_chart(create_active_chart("주차별 매출 실적", w_weeks, cdata.get('weekly_rev_p', [0.0]*len(w_weeks)), cdata.get('weekly_rev_a', [0.0]*len(w_weeks)), unit="억원"), use_container_width=True)
 
     with tab_daily:
-        k1, k2, k3 = st.columns(3)
+        k1, k2, k3, k4 = st.columns(4)
+        
+        d_pure = kpi['daily'].get('pure_rev_a', kpi['daily'].get('rev_a', 0.0))
+        d_carry = 0.0
+        d_pending = kpi['daily'].get('pending_gr_rev', 0.0)
+        
+        d_confirmed_rev = round(d_pure + d_carry, 2)
+        d_total_rev = round(d_confirmed_rev + d_pending, 2)
+        
         with k1: 
             render_kpi_card("당일 생산 (TOTAL)", "🏭", kpi['daily']['prod_a'], kpi['daily']['prod_p'], category="생산")
             render_achievement_gauge("생산", kpi['daily']['prod_a'], kpi['daily']['prod_p'], unit="K", category="생산")
@@ -1396,8 +1443,12 @@ elif menu == "🏠 현황":
             render_kpi_card("당일 출하 (TOTAL)", "🚚", kpi['daily']['ship_a'], kpi['daily']['ship_p'], category="출하")
             render_achievement_gauge("출하", kpi['daily']['ship_a'], kpi['daily']['ship_p'], unit="K", category="출하")
         with k3: 
-            render_kpi_card("당일 예상 매출액 (TOTAL)", "💰", kpi['daily']['rev_a'], kpi['daily']['rev_p'], is_rev=True, category="전체매출")
-            render_achievement_gauge("매출", kpi['daily']['rev_a'], kpi['daily']['rev_p'], unit="억원", category="전체매출")
+            render_kpi_card("당일 확정 매출", "💳", d_confirmed_rev, kpi['daily']['rev_p'], is_rev=True, category="확정매출")
+            render_achievement_gauge("확정매출", d_confirmed_rev, kpi['daily']['rev_p'], unit="억원", category="확정매출")
+        with k4:
+            rev_total_sub = f"확정 {d_confirmed_rev:,.2f}억 + 입고전 {d_pending:,.2f}억"
+            render_kpi_card("당일 예상 매출 (TOTAL)", "💰", d_total_rev, kpi['daily']['rev_p'], is_rev=True, sub_caption=rev_total_sub, category="전체매출")
+            render_achievement_gauge("예상매출", d_total_rev, kpi['daily']['rev_p'], unit="억원", category="전체매출")
 
         ch1, ch2, ch3 = st.columns(3)
         with ch1:
@@ -1405,7 +1456,7 @@ elif menu == "🏠 현황":
         with ch2:
             st.plotly_chart(create_active_chart("출하 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['ship_p']], [kpi['daily']['ship_a']], unit="K"), use_container_width=True)
         with ch3:
-            st.plotly_chart(create_active_chart("매출 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['rev_p']], [kpi['daily']['rev_a']], unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("매출 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['rev_p']], [d_total_rev], unit="억원"), use_container_width=True)
 
 elif menu == "1. 모델별 출하실적":
     st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>📦 1. 모델별 출하 및 매출 현황 (계획 vs 실적)</h1>", unsafe_allow_html=True)
@@ -1651,6 +1702,26 @@ elif menu == "6. 캘린더":
                     day_supply_map[d]['items'].append({
                         'model': m_name, 'gh_code': gh, 'site': site, 'qty': q, 'price': price, 'rev_ok': rev_val
                     })
+                    
+        # [핵심 로직] 과거 엑셀 데이터 누락 방지 (RTF 특성상 지난 날짜는 0이 되는 문제 해결)
+        # 계획(Plan)이 0인데 실적(Actual)이 존재하는 날짜는 실적을 계획으로 덮어씌워 초기값을 살림
+        for d in range(1, num_days + 1):
+            a_data = actual_by_day.get(d, {'qty': 0, 'rev': 0.0, 'items': []})
+            a_q = a_data.get('qty', 0)
+            a_r = a_data.get('rev', 0.0)
+            
+            if day_supply_map[d]['total'] == 0 and a_q > 0:
+                day_supply_map[d]['total'] = a_q
+                day_supply_map[d]['total_rev'] = a_r
+                for a_item in a_data.get('items', []):
+                    day_supply_map[d]['items'].append({
+                        'model': a_item.get('model', ''),
+                        'gh_code': a_item.get('gh_code', ''),
+                        'site': a_item.get('site', ''),
+                        'qty': a_item.get('qty', 0),
+                        'price': a_item.get('price', 0.0),
+                        'rev_ok': a_item.get('rev_ok', 0.0)
+                    })
 
         for d in range(1, num_days + 1):
             if selected_m < t_m or (selected_m == t_m and d <= t_d):
@@ -1658,8 +1729,8 @@ elif menu == "6. 캘린더":
                 cum_plan_rev += day_supply_map[d]['total_rev']
                 
                 act_day_data = actual_by_day.get(d, {'qty': 0, 'rev': 0.0})
-                cum_act_qty += act_day_data['qty']
-                cum_act_rev += act_day_data['rev']
+                cum_act_qty += act_day_data.get('qty', 0)
+                cum_act_rev += act_day_data.get('rev', 0.0)
 
         m_total_qty = sum(day_supply_map[d]['total'] for d in day_supply_map)
         m_total_rev = sum(day_supply_map[d]['total_rev'] for d in day_supply_map)
@@ -1770,8 +1841,8 @@ elif menu == "6. 캘린더":
                         is_past = (selected_m < t_m) or (selected_m == t_m and d_num <= t_d)
                         
                         act_day_data = actual_by_day.get(d_num, {'qty': 0, 'rev': 0.0, 'items': []})
-                        act_q = act_day_data['qty']
-                        act_rev = act_day_data['rev']
+                        act_q = act_day_data.get('qty', 0)
+                        act_rev = act_day_data.get('rev', 0.0)
                         
                         if is_target:
                             border_css = "1.5px solid #4f46e5; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15);"
