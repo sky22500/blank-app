@@ -771,47 +771,33 @@ def parse_rtf_main_plan_excel(file_bytes, target_date_str, mapping_data, exchang
         'fcst_rows': fcst_rows, 'fcst_date_cols': fcst_date_cols
     }
 
-# 3-5. [신규] 미입고(GR) 인보이스 내역 파싱 엔진
+# 3-5. [수정] 미입고(GR) 인보이스 내역 파싱 엔진 (기준일 무관, BL No 필수 조건)
 def parse_pending_gr_excel(file_bytes, target_date_str, exchange_rate=1350.0):
     try:
         df = pd.read_excel(file_bytes)
         df.columns = df.columns.astype(str).str.strip()
 
-        t_m, t_d = parse_target_day_info(target_date_str)
-        target_date_obj = datetime.date(2026, t_m, t_d)
-
-        inv_date_col = next((c for c in df.columns if 'Invoice Dat' in c), None)
         gr_date_col = next((c for c in df.columns if 'GR Date' in c), None)
         inv_amt_col = next((c for c in df.columns if 'Invoice Amou' in c), None)
+        bl_col = next((c for c in df.columns if 'Bill of Lading' in c), None)
 
-        if not all([inv_date_col, gr_date_col, inv_amt_col]):
+        if not all([gr_date_col, inv_amt_col, bl_col]):
             return 0.0
 
         pending_sum_krw = 0.0
         for _, row in df.iterrows():
             gr_val = row[gr_date_col]
+            # 조건 1: GR Date가 공란인 경우
             if pd.isna(gr_val) or str(gr_val).strip().lower() in ["", "nan", "nat", "none", "null"]:
-                inv_date_val = row[inv_date_col]
-                if pd.notna(inv_date_val):
-                    inv_d_obj = None
-                    if isinstance(inv_date_val, datetime.datetime):
-                        inv_d_obj = inv_date_val.date()
-                    elif isinstance(inv_date_val, datetime.date):
-                        inv_d_obj = inv_date_val
-                    else:
-                        try:
-                            s = str(inv_date_val).split(' ')[0]
-                            inv_d_obj = datetime.datetime.strptime(s, '%Y-%m-%d').date()
-                        except:
-                            pass
-
-                    if inv_d_obj and inv_d_obj <= target_date_obj:
-                        amt = row[inv_amt_col]
-                        try:
-                            amt_val = float(amt)
-                            pending_sum_krw += amt_val * exchange_rate
-                        except:
-                            pass
+                bl_val = row[bl_col]
+                # 조건 2: Bill of Lading No에 데이터가 있는 경우만 합산
+                if pd.notna(bl_val) and str(bl_val).strip().lower() not in ["", "nan", "none", "null"]:
+                    amt = row[inv_amt_col]
+                    try:
+                        amt_val = float(amt)
+                        pending_sum_krw += amt_val * exchange_rate
+                    except:
+                        pass
 
         return round(pending_sum_krw / 100_000_000.0, 2)
     except Exception as e:
