@@ -10,7 +10,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # 1. 페이지 설정
-st.set_page_config(page_title="마케팅 부문 실적 대시보드", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="마케팅 부문 대시보드", layout="wide", initial_sidebar_state="expanded")
 
 today = datetime.date.today()
 yesterday = today - datetime.timedelta(days=1)
@@ -241,22 +241,22 @@ def is_match_date(cell_val, target_str):
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8-sig')
 
-# [최상위 하이엔드] 핀테크 / 프리미엄 SaaS 스타일 KPI 카드
+# 프리미엄 디자인 - KPI 카드 렌더링 (텍스트 오리지널)
 def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption=None):
     if is_rev:
-        act_str = f"{actual_val:,.2f}억"
-        plan_str = f"{plan_val:,.2f}억"
+        act_str = f"{actual_val:,.2f}억원"
+        plan_str = f"{plan_val:,.2f}억원"
         diff = actual_val - plan_val
         if diff > 0:
-            diff_str = f"+{diff:,.2f}억"
+            diff_str = f"+{diff:,.2f}억원"
             diff_color = "#10b981"
             bg_accent = "linear-gradient(90deg, #10b981, #059669)"
         elif diff < 0:
-            diff_str = f"-{abs(diff):,.2f}억"
+            diff_str = f"-{abs(diff):,.2f}억원"
             diff_color = "#f43f5e"
             bg_accent = "linear-gradient(90deg, #f43f5e, #e11d48)"
         else:
-            diff_str = "0.00억"
+            diff_str = "0.00억원"
             diff_color = "#94a3b8"
             bg_accent = "linear-gradient(90deg, #cbd5e1, #94a3b8)"
     else:
@@ -299,11 +299,11 @@ def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption
         </div>
         <div style="display: flex; justify-content: space-between; align-items: baseline;">
             <div>
-                <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 4px;">Actual</div>
+                <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 4px;">실적</div>
                 <div style="font-size: 32px; font-weight: 900; color: #0f172a; line-height: 1; letter-spacing: -1px;">{act_str}</div>
             </div>
             <div style="text-align: right;">
-                <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 4px;">Target</div>
+                <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 4px;">계획</div>
                 <div style="font-size: 20px; font-weight: 700; color: #64748b; line-height: 1; letter-spacing: -0.5px;">{plan_str}</div>
             </div>
         </div>
@@ -332,7 +332,7 @@ def render_achievement_gauge(title, actual, plan, unit="K"):
     html = f"""
     <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 18px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02); margin-top: -6px; margin-bottom: 24px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <span style="font-size: 12px; font-weight: 700; color: #64748b; letter-spacing: -0.3px;">{title} 목표 달성률</span>
+            <span style="font-size: 12px; font-weight: 700; color: #64748b; letter-spacing: -0.3px;">{title} 달성률</span>
             <span style="font-size: 14px; font-weight: 900; color: {badge_color}; letter-spacing: -0.5px;">{rate:,.1f}%</span>
         </div>
         <div style="background-color: #f1f5f9; border-radius: 999px; height: 6px; width: 100%; box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);">
@@ -343,32 +343,32 @@ def render_achievement_gauge(title, actual, plan, unit="K"):
     render_html(html)
 
 if hasattr(st, "dialog"):
-    @st.dialog("📊 일자별 공급 상세 스펙", width="large")
+    @st.dialog("📋 일자별 공급 상세 내역 (전체 모델)", width="large")
     def show_day_detail_dialog(d_num, m_num, y_num, d_info):
         items = d_info['items']
         tot_q = d_info['total']
         tot_rev = d_info['total_rev']
         unique_models = sorted(list(set(it['model'] for it in items)))
         
-        st.markdown(f"### 🗓️ {y_num}. {m_num:02d}. {d_num:02d} 공급 데이터")
+        st.markdown(f"### 📅 {y_num}년 {m_num}월 {d_num}일 공급 스케줄")
         
         cards_html = f"""
         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;">
             <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 16px; border-radius: 12px; text-align: center;">
-                <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: -0.3px;">대상 모델</div>
+                <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: -0.3px;">📱 전체 모델 수</div>
                 <div style="font-size: 22px; font-weight: 900; color: #0f172a; margin-top: 4px;">{len(unique_models)}종</div>
             </div>
             <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 16px; border-radius: 12px; text-align: center;">
-                <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: -0.3px;">공급 품목</div>
+                <div style="font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: -0.3px;">📦 총 공급 품목(GH)</div>
                 <div style="font-size: 22px; font-weight: 900; color: #0f172a; margin-top: 4px;">{len(items)}건</div>
             </div>
             <div style="background: #eff6ff; border: 1px solid #bfdbfe; padding: 16px; border-radius: 12px; text-align: center;">
-                <div style="font-size: 11px; font-weight: 700; color: #3b82f6; letter-spacing: -0.3px;">총 수량</div>
+                <div style="font-size: 11px; font-weight: 700; color: #3b82f6; letter-spacing: -0.3px;">🚚 총 공급 수량</div>
                 <div style="font-size: 22px; font-weight: 900; color: #1d4ed8; margin-top: 4px;">{format_k(tot_q)}</div>
             </div>
             <div style="background: #ecfdf5; border: 1px solid #a7f3d0; padding: 16px; border-radius: 12px; text-align: center;">
-                <div style="font-size: 11px; font-weight: 700; color: #10b981; letter-spacing: -0.3px;">예상 매출</div>
-                <div style="font-size: 22px; font-weight: 900; color: #047857; margin-top: 4px;">{tot_rev:,.2f}억</div>
+                <div style="font-size: 11px; font-weight: 700; color: #10b981; letter-spacing: -0.3px;">💰 총 예상 매출액</div>
+                <div style="font-size: 22px; font-weight: 900; color: #047857; margin-top: 4px;">{tot_rev:,.2f}억원</div>
             </div>
         </div>
         """
@@ -389,7 +389,7 @@ if hasattr(st, "dialog"):
             )
             
             st.download_button(
-                label=f"📥 {m_num}/{d_num} 데이터 다운로드 (CSV)",
+                label=f"📥 {m_num}월 {d_num}일 공급 상세 다운로드 (CSV)",
                 data=convert_df(df_pop[['모델명', 'GH-CODE', '출하 SITE', '공급수량', '단가(원)', '예상매출(억원)']]),
                 file_name=f"fcst_supply_{m_num}M_{d_num}D_detail.csv",
                 mime="text/csv",
@@ -399,7 +399,6 @@ if hasattr(st, "dialog"):
         else:
             st.info("해당 일자에 예정된 공급 일정이 없습니다.")
 
-# (파싱 엔진 3-1 ~ 3-4 기존 동일 유지)
 def parse_mapping_excel(file_bytes):
     try:
         df_temp = pd.read_excel(file_bytes, header=None)
@@ -764,7 +763,7 @@ def parse_rtf_main_plan_excel(file_bytes, target_date_str, mapping_data, exchang
         'fcst_rows': fcst_rows, 'fcst_date_cols': fcst_date_cols
     }
 
-# 4. [프리미엄 SaaS] 초고도화 CSS
+# 4. 프리미엄 CSS 스타일링
 render_html("""
 <style>
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
@@ -774,13 +773,11 @@ render_html("""
         letter-spacing: -0.2px;
     }
     
-    /* 앱 배경: 매우 은은한 오프화이트/회백색 */
     .stApp { 
         background-color: #f8fafc; 
         color: #0f172a; 
     }
     
-    /* 사이드바는 기존 코드 그대로 유지 (터치 X) */
     section[data-testid="stSidebar"] { 
         background-color: #0f172a; 
         border-right: 1px solid #1e293b; 
@@ -792,7 +789,6 @@ render_html("""
         color: #ffffff !important;
     }
     
-    /* 탭 디자인: iOS 세그먼트 컨트롤 스타일 */
     .stTabs [data-baseweb="tab-list"] {
         gap: 6px;
         background-color: #e2e8f0;
@@ -818,7 +814,6 @@ render_html("""
         box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
     }
     
-    /* 날짜 배지: 투명도 글래스 뱃지 */
     .date-badge {
         background: rgba(255, 255, 255, 0.7);
         backdrop-filter: blur(10px);
@@ -836,7 +831,6 @@ render_html("""
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
     }
     
-    /* 캘린더 인터랙티브 효과 */
     .cal-card-wrapper {
         position: relative;
         margin-bottom: 10px;
@@ -855,7 +849,6 @@ render_html("""
         z-index: 10;
     }
     
-    /* 애플 스타일 호버 팝업 (블러 & 섀도우) */
     .cal-hover-popup {
         display: none;
         position: absolute;
@@ -886,28 +879,27 @@ render_html("""
 </style>
 """)
 
-# 5. 사이드바 (기존 코드 100% 유지)
+# 5. 사이드바
 with st.sidebar:
-    st.markdown("<div style='font-size: 18px; font-weight: 800; color: #ffffff; margin-bottom: 16px;'>📊 CAMMSYS BI</div>", unsafe_allow_html=True)
-    menu = st.radio("FOLDER", (
+    menu = st.radio("📂 Folder", (
         "🏠 현황", "1. 모델별 출하실적", "2. 모델별 생산실적", 
         "3. 출하 SITE별 실적", "4. 고객 FCST 조회", "5. 완제품 재고 조회", 
         "6. 캘린더", "7. 데이터 관리 (Admin)"
     ))
     
-    st.markdown("<hr style='border-color: #334155; margin: 24px 0 16px 0;'>", unsafe_allow_html=True)
-    if st.button("🔄 최신 실적 동기화", use_container_width=True):
+    st.markdown("---")
+    if st.button("🔄 최신 실적 불러오기", use_container_width=True):
         fetch_db_state_cached.clear()
         latest = fetch_db_state_cached()
         if latest:
             for k, v in latest.items():
                 st.session_state[k] = v
-            st.success("클라우드 최신 실적이 반영되었습니다.")
+            st.success("최신 데이터가 동기화되었습니다!")
             st.rerun()
         else:
             st.info("동기화할 구글 시트 저장 데이터가 없습니다.")
 
-# [프리미엄 SaaS] 차트 렌더링 (Ocean Indigo & Crisp Teal 컬러)
+# 차트 렌더링
 def create_active_chart(title, categories, plan_data, actual_data, name1="계획", name2="실적", unit="개"):
     fig = go.Figure()
     if not categories: categories, plan_data, actual_data = ["-"], [0], [0]
@@ -919,14 +911,12 @@ def create_active_chart(title, categories, plan_data, actual_data, name1="계획
         txt_p = [format_k(v) if v > 0 else "" for v in plan_data]
         txt_a = [format_k(v) if v > 0 else "" for v in actual_data]
         
-    # 계획 바 (세련된 스틸 톤)
     fig.add_trace(go.Bar(
         x=categories, y=plan_data, name=name1, 
         marker_color='#cbd5e1', 
         marker_line=dict(width=0), 
         text=txt_p, textposition='outside', textfont=dict(size=11, color='#94a3b8', family='Pretendard')
     ))
-    # 실적 바 (고급스러운 인디고 톤)
     fig.add_trace(go.Bar(
         x=categories, y=actual_data, name=name2, 
         marker_color='#4f46e5', 
@@ -944,10 +934,10 @@ def create_active_chart(title, categories, plan_data, actual_data, name1="계획
     )
     return fig
 
-# 6. 메인 로직
+# 6. 메인 분기 로직
 if menu == "7. 데이터 관리 (Admin)":
-    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>⚙️ Data Management</h1>", unsafe_allow_html=True)
-    if st.text_input("관리자 비밀번호", type="password") == "2250":
+    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>⚙️ DATA MANAGEMENT</h1>", unsafe_allow_html=True)
+    if st.text_input("비밀번호", type="password") == "2250":
         c_set1, c_set2 = st.columns(2)
         with c_set1: target_date_input = st.text_input("📅 조회 기준 날짜 지정 (예: 11/2)", default_target_date)
         with c_set2: ex_rate_input = st.number_input("💵 적용 환율 (원/USD)", value=1350.0, step=10.0)
@@ -960,14 +950,14 @@ if menu == "7. 데이터 관리 (Admin)":
         with col3: ship_plan_file = st.file_uploader("3. 출하 계획 파일 (RTF Main 시트)", type=['xlsx'], key="admin_ship_plan_file")
         with col4: map_rev_file = st.file_uploader("4. 단가 매핑 파일 (선택)", type=['xlsx'], key="admin_map_rev_file")
             
-        if st.button("🚀 데이터 분석 및 클라우드 반영", type="primary"):
+        if st.button("🚀 데이터 분석 및 반영", type="primary"):
             st.session_state['target_date'] = target_date_input
 
             if map_rev_file:
                 nmap = parse_mapping_excel(map_rev_file)
                 if nmap: 
                     st.session_state['mapping_data'].update(nmap)
-                    st.success(f"✅ 단가표 인식 완료 (GH-CODE {len(nmap['gh_map'])}개 등록)")
+                    st.success(f"✅ 단가표 인식 완료! (GH-CODE {len(nmap['gh_map'])}개 등록)")
 
             if prod_file:
                 with st.spinner("생산 데이터를 분석하고 있습니다..."):
@@ -993,11 +983,11 @@ if menu == "7. 데이터 관리 (Admin)":
                         st.session_state['inventory_data']['qty'] = p['inventory_qty']
                         st.session_state['inventory_data']['days'] = p['inventory_days']
                         st.session_state['data_loaded'] = True
-                        st.success(f"✅ 생산 데이터 분석 완료 (Daily 계획: {format_k(p['daily_prod_plan'])} / 실적: {format_k(p['daily_prod_actual'])})")
+                        st.success(f"✅ 생산 데이터 반영 완료! (Daily 계획: {format_k(p['daily_prod_plan'])} / 실적: {format_k(p['daily_prod_actual'])})")
                     except Exception as e: st.error(f"생산 파싱 오류: {e}")
             
             if ship_actual_file:
-                with st.spinner("출하 실적 및 이월 매출을 분석하고 있습니다..."):
+                with st.spinner("출하 실적 및 F열 전월 이월 매출을 분석하고 있습니다..."):
                     try:
                         s_act = parse_new_shipment_actual_excel(ship_actual_file, target_date_input, st.session_state['mapping_data'])
                         if s_act:
@@ -1037,7 +1027,7 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.session_state['_ship_actual_by_site'] = s_act['actual_by_site']
                             
                             st.session_state['data_loaded'] = True
-                            st.success(f"✅ 출하 실적 분석 완료 (Daily 실적: {format_k(s_act['daily_ship_a'])} / {s_act['daily_rev_a']:,.2f}억원)")
+                            st.success(f"✅ 출하 실적 반영 완료! (Daily 실적: {format_k(s_act['daily_ship_a'])} / {s_act['daily_rev_a']:,.2f}억원 | F열 이월 매출: {carryover:,.2f}억원)")
                     except Exception as e: st.error(f"출하 실적 파싱 오류: {e}")
 
             if ship_plan_file:
@@ -1069,7 +1059,7 @@ if menu == "7. 데이터 관리 (Admin)":
                             }
 
                             st.session_state['data_loaded'] = True
-                            st.success(f"✅ 계획 데이터 분석 완료 (Daily 계획: {format_k(s_plan['daily_ship_p'])} / {s_plan['daily_rev_p']:,.2f}억원)")
+                            st.success(f"✅ 출하 & 매출 계획 반영 완료! (Daily 계획: {format_k(s_plan['daily_ship_p'])} / {s_plan['daily_rev_p']:,.2f}억원)")
                     except Exception as e: st.error(f"출하 계획 파싱 오류: {e}")
 
             p_models = st.session_state.get('_ship_plan_by_model', {})
@@ -1128,18 +1118,18 @@ if menu == "7. 데이터 관리 (Admin)":
                 save_payload = {k: st.session_state[k] for k in sync_keys if k in st.session_state}
                 is_saved = save_state_to_gsheet(save_payload)
                 if is_saved:
-                    st.success("🎉 클라우드 동기화 완료! 이제 모든 사용자의 화면에 최신 실적이 표시됩니다.")
+                    st.success("🎉 구글 시트 저장 완료! 이제 모든 사용자의 화면에 최신 실적이 표시됩니다.")
                 else:
                     st.warning("⚠️ 분석은 완료되었으나 클라우드 저장에 실패했습니다.")
 
 elif menu == "🏠 현황":
-    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px; margin-bottom: 8px;'>Overview</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px; margin-bottom: 8px;'>📊 실시간 현황</h1>", unsafe_allow_html=True)
     
     cur_target_date = st.session_state.get('target_date', default_target_date)
     render_html(f"""
     <div class="date-badge">
         <span style="font-size: 16px;">📅</span> 
-        <span>Reporting Date</span>
+        <span>조회 기준일자 :</span>
         <span style="color: #4f46e5; font-weight: 900;">{cur_target_date}</span>
     </div>
     """)
@@ -1147,93 +1137,93 @@ elif menu == "🏠 현황":
     kpi = st.session_state.get('kpi_data', default_kpis)
     cdata = st.session_state.get('chart_data', default_charts)
 
-    tab_monthly, tab_weekly, tab_daily = st.tabs(["🗓️ Monthly 누계", "📊 Weekly 주차별", "📅 Daily 당일"])
+    tab_monthly, tab_weekly, tab_daily = st.tabs(["🗓️ Monthly", "📊 Weekly", "📅 Daily"])
 
     with tab_monthly:
         m1, m2, m3 = st.columns(3)
         with m1: 
             render_kpi_card("월간 생산 누계", "🏭", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'])
-            render_achievement_gauge("생산 목표", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], unit="K")
+            render_achievement_gauge("생산", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], unit="K")
         with m2: 
             render_kpi_card("월간 출하 누계", "🚚", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'])
-            render_achievement_gauge("출하 목표", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], unit="K")
+            render_achievement_gauge("출하", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], unit="K")
         with m3: 
-            rev_sub = f"당월 실적 {kpi['monthly']['pure_rev_a']:,.2f}억 / 전월 이월 {kpi['monthly']['carryover_rev']:,.2f}억"
-            render_kpi_card("월간 매출 누계", "💳", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], is_rev=True, sub_caption=rev_sub)
-            render_achievement_gauge("매출 목표", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], unit="억원")
+            rev_sub = f"당월 실적 {kpi['monthly']['pure_rev_a']:,.2f}억 + 이월 매출 {kpi['monthly']['carryover_rev']:,.2f}억"
+            render_kpi_card("월간 매출 누계", "💰", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], is_rev=True, sub_caption=rev_sub)
+            render_achievement_gauge("매출", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], unit="억원")
 
         mch1, mch2, mch3 = st.columns(3)
         m_months = cdata.get('monthly_months', ['11월'])
         with mch1:
-            st.plotly_chart(create_active_chart("월별 생산 추이", m_months, cdata.get('monthly_prod_p', [0]), cdata.get('monthly_prod_a', [0]), unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("월별 생산 실적", m_months, cdata.get('monthly_prod_p', [0]), cdata.get('monthly_prod_a', [0]), unit="K"), use_container_width=True)
         with mch2:
-            st.plotly_chart(create_active_chart("월별 출하 추이", m_months, cdata.get('monthly_ship_p', [0]), cdata.get('monthly_ship_a', [0]), unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("월별 출하 실적", m_months, cdata.get('monthly_ship_p', [0]), cdata.get('monthly_ship_a', [0]), unit="K"), use_container_width=True)
         with mch3:
-            st.plotly_chart(create_active_chart("월별 매출 추이", m_months, cdata.get('monthly_rev_p', [0.0]), cdata.get('monthly_rev_a', [0.0]), unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("월별 매출 실적", m_months, cdata.get('monthly_rev_p', [0.0]), cdata.get('monthly_rev_a', [0.0]), unit="억원"), use_container_width=True)
 
     with tab_weekly:
         wk1, wk2, wk3 = st.columns(3)
         with wk1: 
             render_kpi_card("주간 생산 누계", "🏭", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'])
-            render_achievement_gauge("생산 목표", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], unit="K")
+            render_achievement_gauge("생산", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], unit="K")
         with wk2: 
             render_kpi_card("주간 출하 누계", "🚚", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'])
-            render_achievement_gauge("출하 목표", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], unit="K")
+            render_achievement_gauge("출하", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], unit="K")
         with wk3: 
-            rev_sub = f"당주 실적 {kpi['weekly']['pure_rev_a']:,.2f}억 / 이월 {kpi['weekly']['carryover_rev']:,.2f}억"
-            render_kpi_card("주간 매출 누계", "💳", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], is_rev=True, sub_caption=rev_sub)
-            render_achievement_gauge("매출 목표", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], unit="억원")
+            rev_sub = f"당월 실적 {kpi['weekly']['pure_rev_a']:,.2f}억 + 이월 매출 {kpi['weekly']['carryover_rev']:,.2f}억"
+            render_kpi_card("주간 매출 누계", "💰", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], is_rev=True, sub_caption=rev_sub)
+            render_achievement_gauge("매출", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], unit="억원")
 
         wch1, wch2, wch3 = st.columns(3)
         w_weeks = cdata.get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
         with wch1:
-            st.plotly_chart(create_active_chart("주차별 생산 추이", w_weeks, cdata.get('weekly_prod_p', [0]*len(w_weeks)), cdata.get('weekly_prod_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("주차별 생산 실적", w_weeks, cdata.get('weekly_prod_p', [0]*len(w_weeks)), cdata.get('weekly_prod_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
         with wch2:
-            st.plotly_chart(create_active_chart("주차별 출하 추이", w_weeks, cdata.get('weekly_ship_p', [0]*len(w_weeks)), cdata.get('weekly_ship_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("주차별 출하 실적", w_weeks, cdata.get('weekly_ship_p', [0]*len(w_weeks)), cdata.get('weekly_ship_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
         with wch3:
-            st.plotly_chart(create_active_chart("주차별 매출 추이", w_weeks, cdata.get('weekly_rev_p', [0.0]*len(w_weeks)), cdata.get('weekly_rev_a', [0.0]*len(w_weeks)), unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("주차별 매출 실적", w_weeks, cdata.get('weekly_rev_p', [0.0]*len(w_weeks)), cdata.get('weekly_rev_a', [0.0]*len(w_weeks)), unit="억원"), use_container_width=True)
 
     with tab_daily:
         k1, k2, k3 = st.columns(3)
         with k1: 
-            render_kpi_card("당일 생산 실적", "🏭", kpi['daily']['prod_a'], kpi['daily']['prod_p'])
-            render_achievement_gauge("생산 목표", kpi['daily']['prod_a'], kpi['daily']['prod_p'], unit="K")
+            render_kpi_card("생산 (TOTAL)", "🏭", kpi['daily']['prod_a'], kpi['daily']['prod_p'])
+            render_achievement_gauge("생산", kpi['daily']['prod_a'], kpi['daily']['prod_p'], unit="K")
         with k2: 
-            render_kpi_card("당일 출하 실적", "🚚", kpi['daily']['ship_a'], kpi['daily']['ship_p'])
-            render_achievement_gauge("출하 목표", kpi['daily']['ship_a'], kpi['daily']['ship_p'], unit="K")
+            render_kpi_card("출하 (TOTAL)", "🚚", kpi['daily']['ship_a'], kpi['daily']['ship_p'])
+            render_achievement_gauge("출하", kpi['daily']['ship_a'], kpi['daily']['ship_p'], unit="K")
         with k3: 
-            render_kpi_card("당일 매출 실적", "💳", kpi['daily']['rev_a'], kpi['daily']['rev_p'], is_rev=True)
-            render_achievement_gauge("매출 목표", kpi['daily']['rev_a'], kpi['daily']['rev_p'], unit="억원")
+            render_kpi_card("매출 (TOTAL)", "💰", kpi['daily']['rev_a'], kpi['daily']['rev_p'], is_rev=True)
+            render_achievement_gauge("매출", kpi['daily']['rev_a'], kpi['daily']['rev_p'], unit="억원")
 
         ch1, ch2, ch3 = st.columns(3)
         with ch1:
-            st.plotly_chart(create_active_chart("생산 실적 (당일)", ["Today"], [kpi['daily']['prod_p']], [kpi['daily']['prod_a']], unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("생산 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['prod_p']], [kpi['daily']['prod_a']], unit="K"), use_container_width=True)
         with ch2:
-            st.plotly_chart(create_active_chart("출하 실적 (당일)", ["Today"], [kpi['daily']['ship_p']], [kpi['daily']['ship_a']], unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("출하 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['ship_p']], [kpi['daily']['ship_a']], unit="K"), use_container_width=True)
         with ch3:
-            st.plotly_chart(create_active_chart("매출 실적 (당일)", ["Today"], [kpi['daily']['rev_p']], [kpi['daily']['rev_a']], unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("매출 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['rev_p']], [kpi['daily']['rev_a']], unit="억원"), use_container_width=True)
 
 elif menu == "1. 모델별 출하실적":
-    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>📦 모델별 실적</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>📦 1. 모델별 출하 및 매출 현황 (계획 vs 실적)</h1>", unsafe_allow_html=True)
     df_ship = pd.DataFrame(st.session_state['chart_data'].get('ship_by_model', []))
     if not df_ship.empty:
         df_ship = df_ship.sort_values('출하실적(개)', ascending=False)
         
         tab_qty, tab_rev = st.tabs(["🚚 출하 수량 현황 (K)", "💰 매출액 현황 (억원)"])
         with tab_qty:
-            st.plotly_chart(create_active_chart("주요 모델별 출하 수량", df_ship['모델명'].tolist(), df_ship['출하계획(개)'].tolist(), df_ship['출하실적(개)'].tolist(), unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("모델별 출하 수량 (계획 vs 실적)", df_ship['모델명'].tolist(), df_ship['출하계획(개)'].tolist(), df_ship['출하실적(개)'].tolist(), unit="K"), use_container_width=True)
         with tab_rev:
-            st.plotly_chart(create_active_chart("주요 모델별 매출액", df_ship['모델명'].tolist(), df_ship['매출계획(억원)'].tolist(), df_ship['매출실적(억원)'].tolist(), unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("모델별 매출액 (계획 vs 실적)", df_ship['모델명'].tolist(), df_ship['매출계획(억원)'].tolist(), df_ship['매출실적(억원)'].tolist(), unit="억원"), use_container_width=True)
             
         col1, col2 = st.columns([0.8, 0.2])
         with col2: st.download_button(label="📥 엑셀(CSV) 다운로드", data=convert_df(df_ship), file_name='model_shipment_performance.csv', mime='text/csv', use_container_width=True)
         st.dataframe(df_ship[['모델명', '출하계획(K)', '출하실적(K)', '수량달성률(%)', '수량차질(K)', '매출계획(억원)', '매출실적(억원)', '매출달성률(%)']], use_container_width=True, hide_index=True)
-    else: st.info("데이터가 없습니다.")
+    else: st.info("출하 실적 및 계획 데이터를 업로드해 주세요.")
         
 elif menu == "2. 모델별 생산실적":
-    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>🛠️ 생산 실적</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>🛠️ 2. 모델별 생산실적</h1>", unsafe_allow_html=True)
     cdata = st.session_state['chart_data']
-    st.plotly_chart(create_active_chart("주요 모델별 생산 실적 현황", cdata.get('daily_models', []), cdata.get('daily_prod_p', []), cdata.get('daily_prod_a', []), unit="K"), use_container_width=True)
+    st.plotly_chart(create_active_chart("모델별 생산 현황 (계획 vs 실적)", cdata.get('daily_models', []), cdata.get('daily_prod_p', []), cdata.get('daily_prod_a', []), unit="K"), use_container_width=True)
     
     df_prod = pd.DataFrame({"모델명": cdata.get('daily_models', []), "생산계획": cdata.get('daily_prod_p', []), "생산실적": cdata.get('daily_prod_a', [])})
     if not df_prod.empty:
@@ -1242,34 +1232,34 @@ elif menu == "2. 모델별 생산실적":
         df_prod['달성률(%)'] = (df_prod['생산실적'] / df_prod['생산계획'].replace(0, 1) * 100).round(1)
         df_prod['차질수량(K)'] = (df_prod['생산계획'] - df_prod['생산실적']).apply(format_k)
         col1, col2 = st.columns([0.8, 0.2])
-        with col2: st.download_button(label="📥 엑셀 다운로드", data=convert_df(df_prod), file_name='model_production.csv', mime='text/csv', use_container_width=True)
+        with col2: st.download_button(label="📥 엑셀(CSV) 다운로드", data=convert_df(df_prod), file_name='model_production.csv', mime='text/csv', use_container_width=True)
         st.dataframe(df_prod[['모델명', '생산계획(K)', '생산실적(K)', '달성률(%)', '차질수량(K)']], use_container_width=True, hide_index=True)
 
 elif menu == "3. 출하 SITE별 실적":
-    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>📍 SITE 실적</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>📍 3. 출하 SITE별 출하 및 매출 현황 (계획 vs 실적)</h1>", unsafe_allow_html=True)
     df_site = pd.DataFrame(st.session_state['chart_data'].get('ship_by_site', []))
     if not df_site.empty:
         df_site = df_site.sort_values('출하실적(개)', ascending=False)
         
         tab_s_qty, tab_s_rev = st.tabs(["🚚 SITE별 출하 수량 (K)", "💰 SITE별 매출액 (억원)"])
         with tab_s_qty:
-            st.plotly_chart(create_active_chart("거점별 출하 수량 현황", df_site['SITE'].tolist(), df_site['출하계획(개)'].tolist(), df_site['출하실적(개)'].tolist(), unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("SITE별 출하 수량 (계획 vs 실적)", df_site['SITE'].tolist(), df_site['출하계획(개)'].tolist(), df_site['출하실적(개)'].tolist(), unit="K"), use_container_width=True)
         with tab_s_rev:
-            st.plotly_chart(create_active_chart("거점별 매출액 현황", df_site['SITE'].tolist(), df_site['매출계획(억원)'].tolist(), df_site['매출실적(억원)'].tolist(), unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("SITE별 매출액 (계획 vs 실적)", df_site['SITE'].tolist(), df_site['매출계획(억원)'].tolist(), df_site['매출실적(억원)'].tolist(), unit="억원"), use_container_width=True)
             
         col1, col2 = st.columns([0.8, 0.2])
-        with col2: st.download_button(label="📥 엑셀 다운로드", data=convert_df(df_site), file_name='site_shipment_performance.csv', mime='text/csv', use_container_width=True)
+        with col2: st.download_button(label="📥 엑셀(CSV) 다운로드", data=convert_df(df_site), file_name='site_shipment_performance.csv', mime='text/csv', use_container_width=True)
         st.dataframe(df_site[['SITE', '출하계획(K)', '출하실적(K)', '수량달성률(%)', '수량차질(K)', '매출계획(억원)', '매출실적(억원)', '매출달성률(%)']], use_container_width=True, hide_index=True)
-    else: st.info("데이터가 없습니다.")
+    else: st.info("출하 실적 및 계획 데이터를 업로드해 주세요.")
 
 elif menu == "4. 고객 FCST 조회":
-    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>📈 FCST 현황</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>📈 4. 고객 FCST 조회 (모델별 공급 일정)</h1>", unsafe_allow_html=True)
     fcst_data = st.session_state.get('fcst_data', {'rows': [], 'date_cols': []})
     fcst_rows = fcst_data.get('rows', [])
     date_cols = fcst_data.get('date_cols', [])
 
     if not fcst_rows:
-        st.info("💡 출하 계획 파일(RTF Main 시트)을 Admin 메뉴에서 업로드 및 분석해 주세요.")
+        st.info("💡 출하 계획 파일(RTF Main 시트)을 **[7. 데이터 관리 (Admin)]** 메뉴에서 업로드 및 분석해 주세요.")
     else:
         df_fcst = pd.DataFrame(fcst_rows)
         
@@ -1281,21 +1271,21 @@ elif menu == "4. 고객 FCST 조회":
         
         m1, m2, m3, m4 = st.columns(4)
         with m1: st.metric("📦 총 공급 계획 물량", f"{format_k(total_fcst_qty)}")
-        with m2: st.metric("📱 대상 모델 수", f"{model_count} 개 모델")
-        with m3: st.metric("🏭 공급 거점 수", f"{site_count} 개 SITE")
+        with m2: st.metric("📱 계획 대상 모델 수", f"{model_count} 개 모델")
+        with m3: st.metric("🏭 공급 대상 SITE 수", f"{site_count} 개 거점")
         with m4: st.metric("👑 최대 공급 모델", f"{top_model}", f"{format_k(top_model_qty)}")
         
         st.markdown("<br>", unsafe_allow_html=True)
         f1, f2, f3 = st.columns([1.5, 1.2, 1.3])
         with f1:
             all_models = sorted(df_fcst['모델명'].unique().tolist())
-            selected_models = st.multiselect("🔍 모델명 필터", options=all_models, default=[])
+            selected_models = st.multiselect("🔍 모델명 필터 (다중 선택 가능)", options=all_models, default=[])
         with f2:
             all_sites = sorted(df_fcst['SITE'].unique().tolist())
             selected_sites = st.multiselect("🏢 출하 SITE 필터", options=all_sites, default=[])
         with f3:
             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-            hide_zero_cols = st.checkbox("물량이 있는 일자만 표시", value=True)
+            hide_zero_cols = st.checkbox("공급 물량이 있는 날짜만 표시", value=True)
 
         df_filtered = df_fcst.copy()
         if selected_models:
@@ -1309,12 +1299,13 @@ elif menu == "4. 고객 FCST 조회":
             valid_dates = [c for c in date_cols if c in df_filtered.columns]
 
         tab_by_model, tab_by_detail, tab_charts = st.tabs([
-            "📊 모델별 통합 일정", 
-            "📋 SITE별 상세 공급 내역", 
-            "📈 공급 추이 차트"
+            "📊 모델별 공급 일정 (통합)", 
+            "📋 품목 / SITE별 상세 공급 일정", 
+            "📈 공급 계획 추이 차트"
         ])
 
         with tab_by_model:
+            st.markdown("##### 📌 모델별 공급 계획 일정 (일자별 합계, 단위: K)")
             if not df_filtered.empty and valid_dates:
                 df_model_pivot = df_filtered.groupby('모델명')[valid_dates].sum()
                 df_model_pivot['총 공급계획(개)'] = df_model_pivot.sum(axis=1)
@@ -1331,7 +1322,7 @@ elif menu == "4. 고객 FCST 조회":
                 c_btn1, c_btn2 = st.columns([0.8, 0.2])
                 with c_btn2:
                     st.download_button(
-                        label="📥 CSV 다운로드",
+                        label="📥 모델별 일정 CSV 다운로드",
                         data=convert_df(df_model_pivot),
                         file_name='fcst_supply_by_model.csv',
                         mime='text/csv',
@@ -1339,9 +1330,10 @@ elif menu == "4. 고객 FCST 조회":
                     )
                 st.dataframe(df_model_disp, use_container_width=True, hide_index=True)
             else:
-                st.warning("선택한 조건에 해당하는 일정이 없습니다.")
+                st.warning("선택한 조건에 해당하는 공급 일정이 없습니다.")
 
         with tab_by_detail:
+            st.markdown("##### 📌 품목코드(GH-CODE) 및 출하 SITE별 상세 공급 일정 (단위: K)")
             if not df_filtered.empty and valid_dates:
                 detail_cols = ['모델명', 'GH_CODE', 'SITE', '합계'] + valid_dates
                 df_detail = df_filtered[detail_cols].sort_values(by='합계', ascending=False)
@@ -1354,7 +1346,7 @@ elif menu == "4. 고객 FCST 조회":
                 c_btn1, c_btn2 = st.columns([0.8, 0.2])
                 with c_btn2:
                     st.download_button(
-                        label="📥 CSV 다운로드",
+                        label="📥 상세 일정 CSV 다운로드",
                         data=convert_df(df_detail),
                         file_name='fcst_supply_detailed.csv',
                         mime='text/csv',
@@ -1362,9 +1354,10 @@ elif menu == "4. 고객 FCST 조회":
                     )
                 st.dataframe(df_detail_disp, use_container_width=True, hide_index=True)
             else:
-                st.warning("선택한 조건에 해당하는 일정이 없습니다.")
+                st.warning("선택한 조건에 해당하는 공급 일정이 없습니다.")
 
         with tab_charts:
+            st.markdown("##### 📌 모델별 공급 물량 및 일자별 공급 추이")
             ch_col1, ch_col2 = st.columns(2)
             with ch_col1:
                 top10_models = df_filtered.groupby('모델명')['합계'].sum().sort_values(ascending=False).head(10)
@@ -1378,7 +1371,7 @@ elif menu == "4. 고객 FCST 조회":
                     textfont=dict(size=11, color='#0f172a', family='Pretendard', weight='bold')
                 ))
                 fig_top10.update_layout(
-                    title="<b>TOP 10 모델별 공급 물량</b> <span style='font-size:12px; font-weight:500; color:#64748b;'>(단위: K)</span>",
+                    title="<b>TOP 10 모델별 공급 계획 물량 (단위: K)</b>",
                     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                     hovermode='x unified', margin=dict(l=10, r=10, t=40, b=10),
                     yaxis=dict(showgrid=True, gridcolor='#f1f5f9')
@@ -1397,7 +1390,7 @@ elif menu == "4. 고객 FCST 조회":
                     textfont=dict(size=11, color='#0f172a', family='Pretendard', weight='bold')
                 ))
                 fig_trend.update_layout(
-                    title="<b>일자별 공급 추이</b> <span style='font-size:12px; font-weight:500; color:#64748b;'>(단위: K)</span>",
+                    title="<b>일자별 전체 공급 계획 추이 (단위: K)</b>",
                     plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                     hovermode='x unified', margin=dict(l=10, r=10, t=40, b=10),
                     yaxis=dict(showgrid=True, gridcolor='#f1f5f9')
@@ -1405,17 +1398,17 @@ elif menu == "4. 고객 FCST 조회":
                 st.plotly_chart(fig_trend, use_container_width=True)
 
 elif menu == "5. 완제품 재고 조회":
-    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>🏢 재고 현황</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>🏢 5. 완제품 재고 조회</h1>", unsafe_allow_html=True)
     st.metric("📦 당일 완제품 총 재고", f"{format_k(st.session_state['inventory_data']['qty'])}", f"재고일수: {st.session_state['inventory_data']['days']} 일", delta_color="off")
 
 elif menu == "6. 캘린더":
-    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px; margin-bottom: 8px;'>🗓️ 공급 캘린더</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px; margin-bottom: 8px;'>🗓️ 6. 월간 FCST 공급 캘린더</h1>", unsafe_allow_html=True)
     fcst_data = st.session_state.get('fcst_data', {'rows': [], 'date_cols': []})
     fcst_rows = fcst_data.get('rows', [])
     actual_by_day = st.session_state.get('actual_by_day', {})
     
     if not fcst_rows:
-        st.info("💡 출하 계획을 Admin 메뉴에서 업로드 및 분석해 주세요.")
+        st.info("💡 출하 계획 파일(RTF Main 시트)을 **[7. 데이터 관리 (Admin)]** 메뉴에서 업로드 및 분석해 주세요.")
     else:
         t_m, t_d = parse_target_day_info(st.session_state.get('target_date', default_target_date))
 
@@ -1424,7 +1417,7 @@ elif menu == "6. 캘린더":
             month_options = [10, 11, 12, 1]
             month_labels = {10: "2026년 10월", 11: "2026년 11월 (당월)", 12: "2026년 12월", 1: "2027년 1월"}
             default_idx = month_options.index(t_m) if t_m in month_options else 1
-            selected_m = st.selectbox("📅 조회 대상 월", options=month_options, format_func=lambda x: month_labels.get(x, f"{x}월"), index=default_idx)
+            selected_m = st.selectbox("📅 조회 대상 월 선택", options=month_options, format_func=lambda x: month_labels.get(x, f"{x}월"), index=default_idx)
             
         cur_year = 2027 if selected_m == 1 else 2026
         cal_instance = calendar.Calendar(firstweekday=6)
@@ -1466,22 +1459,22 @@ elif menu == "6. 캘린더":
             render_html(f"""
             <div style="background: #ffffff; border: 1px solid #e2e8f0; padding: 14px 20px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); display: flex; justify-content: space-around; align-items: center;">
                 <div style="text-align: center;">
-                    <div style="font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">당월 총 공급계획</div>
+                    <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;">당월 총 공급계획</div>
                     <div style="font-size: 20px; font-weight: 900; color: #0f172a; margin-top: 4px; letter-spacing: -0.5px;">{format_k(m_total_qty)}</div>
                 </div>
                 <div style="border-left: 1px solid #f1f5f9; height: 32px;"></div>
                 <div style="text-align: center;">
-                    <div style="font-size: 11px; font-weight: 700; color: #4f46e5; text-transform: uppercase; letter-spacing: 0.5px;">당월 예상 매출</div>
+                    <div style="font-size: 11px; font-weight: 700; color: #4f46e5; letter-spacing: 0.5px;">당월 총 예상 매출</div>
                     <div style="font-size: 20px; font-weight: 900; color: #4f46e5; margin-top: 4px; letter-spacing: -0.5px;">{m_total_rev:,.2f} 억원</div>
                 </div>
                 <div style="border-left: 1px solid #f1f5f9; height: 32px;"></div>
                 <div style="text-align: center;">
-                    <div style="font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">공급 예정 일수</div>
+                    <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;">공급 예정 일수</div>
                     <div style="font-size: 20px; font-weight: 900; color: #0f172a; margin-top: 4px; letter-spacing: -0.5px;">{supply_days_cnt}일 <span style="font-size: 14px; font-weight: 600; color: #cbd5e1;">/ {num_days}일</span></div>
                 </div>
                 <div style="border-left: 1px solid #f1f5f9; height: 32px;"></div>
                 <div style="text-align: center;">
-                    <div style="font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">최대 공급 모델</div>
+                    <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;">최대 공급 모델</div>
                     <div style="font-size: 16px; font-weight: 900; color: #0d9488; margin-top: 4px; letter-spacing: -0.3px;">{top_m_name} ({format_k(top_m_qty)})</div>
                 </div>
             </div>
@@ -1490,13 +1483,13 @@ elif menu == "6. 캘린더":
         st.markdown("<br>", unsafe_allow_html=True)
 
         days_headers = [
-            ("<span style='color: #f43f5e;'>SUN</span>", "#f43f5e"),
-            ("MON", "#64748b"),
-            ("TUE", "#64748b"),
-            ("WED", "#64748b"),
-            ("THU", "#64748b"),
-            ("FRI", "#64748b"),
-            ("<span style='color: #4f46e5;'>SAT</span>", "#4f46e5")
+            ("<span style='color: #f43f5e;'>일 (SUN)</span>", "#f43f5e"),
+            ("월 (MON)", "#64748b"),
+            ("화 (TUE)", "#64748b"),
+            ("수 (WED)", "#64748b"),
+            ("목 (THU)", "#64748b"),
+            ("금 (FRI)", "#64748b"),
+            ("<span style='color: #4f46e5;'>토 (SAT)</span>", "#4f46e5")
         ]
         
         h_cols = st.columns(7)
@@ -1529,7 +1522,7 @@ elif menu == "6. 캘린더":
                         if is_target:
                             border_css = "1.5px solid #4f46e5; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15);"
                             bg_css = "#eef2ff"
-                            badge_target = "<span style='background: #4f46e5; color: #ffffff; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 20px; margin-left: 6px; letter-spacing: -0.2px;'>TODAY</span>"
+                            badge_target = "<span style='background: #4f46e5; color: #ffffff; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 20px; margin-left: 6px; letter-spacing: -0.2px;'>기준일</span>"
                         else:
                             border_css = "1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.02);"
                             bg_css = "#ffffff" if (plan_q > 0 or act_q > 0) else "#f8fafc"
@@ -1554,12 +1547,12 @@ elif menu == "6. 캘린더":
                             board_content_html = f"""
                             <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px;">
                                 <div style="font-size: 11.5px; font-weight: 700; color: #0f172a; display: flex; justify-content: space-between; align-items: baseline;">
-                                    <span style="color: #64748b;">실적</span>
+                                    <span style="color: #64748b;">실적 수량:</span>
                                     <span><span style="font-size: 13px; font-weight: 900;">{format_k(act_q)}</span> <span style="font-size: 10px;">({diff_q_tag})</span></span>
                                 </div>
                                 <div style="font-size: 11.5px; font-weight: 700; color: #0f172a; display: flex; justify-content: space-between; align-items: baseline;">
-                                    <span style="color: #64748b;">매출</span>
-                                    <span><span style="font-size: 13px; font-weight: 900;">{act_rev:,.2f}</span> <span style="font-size: 10px;">({diff_rev_tag})</span></span>
+                                    <span style="color: #64748b;">실적 매출:</span>
+                                    <span><span style="font-size: 13px; font-weight: 900;">{act_rev:,.2f}억</span> <span style="font-size: 10px;">({diff_rev_tag})</span></span>
                                 </div>
                             </div>
                             """
@@ -1567,12 +1560,12 @@ elif menu == "6. 캘린더":
                             board_content_html = f"""
                             <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px;">
                                 <div style="font-size: 11.5px; font-weight: 700; color: #0f172a; display: flex; justify-content: space-between; align-items: baseline;">
-                                    <span style="color: #64748b;">계획</span>
+                                    <span style="color: #64748b;">계획 수량:</span>
                                     <span style="font-size: 13px; font-weight: 900; color: #0f172a;">{format_k(plan_q)}</span>
                                 </div>
                                 <div style="font-size: 11.5px; font-weight: 700; color: #0f172a; display: flex; justify-content: space-between; align-items: baseline;">
-                                    <span style="color: #64748b;">매출</span>
-                                    <span style="font-size: 13px; font-weight: 900; color: #4f46e5;">{plan_rev:,.2f}억</span>
+                                    <span style="color: #64748b;">계획 매출:</span>
+                                    <span style="font-size: 13px; font-weight: 900; color: #4f46e5;">{plan_rev:,.2f}억원</span>
                                 </div>
                             </div>
                             """
@@ -1585,7 +1578,7 @@ elif menu == "6. 캘린더":
                             q_txt = format_k(it['qty'])
                             hover_list_html += f"<div style='font-size: 11px; color: #0f172a; padding: 4px 0; border-bottom: 1px solid rgba(0,0,0,0.04); display: flex; justify-content: space-between;'><span style='font-weight: 600;'>{it['model']} <span style='color: #64748b;'>({it['site']})</span></span><span><b style='color: #4f46e5;'>{q_txt}</b> / {it['rev_ok']:,.2f}억</span></div>"
                         if len(items_sorted) > 6:
-                            hover_list_html += f"<div style='font-size: 10px; color: #94a3b8; font-weight: 800; text-align: center; margin-top: 6px;'>+ {len(items_sorted)-6} ITEMS MORE</div>"
+                            hover_list_html += f"<div style='font-size: 10px; color: #94a3b8; font-weight: 800; text-align: center; margin-top: 6px;'>+ 외 {len(items_sorted)-6}개 품목 더 있음</div>"
 
                         if day_idx <= 1: pos_class = "pos-left"
                         elif day_idx >= 5: pos_class = "pos-right"
@@ -1594,21 +1587,20 @@ elif menu == "6. 캘린더":
                         hover_popup_html = f"""
                         <div class="cal-hover-popup {pos_class}">
                             <div style="font-size: 14px; font-weight: 900; color: #0f172a; border-bottom: 1px solid rgba(0,0,0,0.06); padding-bottom: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-                                <span>{selected_m}. {d_num} Schedule</span>
-                                <span style="font-size: 11px; background: #e2e8f0; color: #475569; padding: 2px 8px; border-radius: 20px;">{unique_models_cnt} Models</span>
+                                <span>📅 {selected_m}월 {d_num}일 공급 스케줄 (전체 {unique_models_cnt}종)</span>
                             </div>
                             <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px;">
                                 <div style="background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.04); padding: 8px; border-radius: 8px; text-align: center;">
-                                    <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Total Qty</div>
+                                    <div style="font-size: 10px; font-weight: 700; color: #64748b;">총 계획수량</div>
                                     <div style="font-size: 15px; font-weight: 900; color: #4f46e5; margin-top: 2px;">{format_k(plan_q)}</div>
                                 </div>
                                 <div style="background: rgba(255,255,255,0.5); border: 1px solid rgba(0,0,0,0.04); padding: 8px; border-radius: 8px; text-align: center;">
-                                    <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Total Rev</div>
-                                    <div style="font-size: 15px; font-weight: 900; color: #0d9488; margin-top: 2px;">{plan_rev:,.2f}억</div>
+                                    <div style="font-size: 10px; font-weight: 700; color: #64748b;">총 예상매출</div>
+                                    <div style="font-size: 15px; font-weight: 900; color: #0d9488; margin-top: 2px;">{plan_rev:,.2f}억원</div>
                                 </div>
                             </div>
                             <div style="max-height: 150px; overflow-y: auto;">
-                                {hover_list_html if hover_list_html else "<div style='font-size: 11px; color: #94a3b8; text-align: center; padding: 10px;'>일정 없음</div>"}
+                                {hover_list_html if hover_list_html else "<div style='font-size: 11px; color: #94a3b8; text-align: center; padding: 10px;'>공급 일정 없음</div>"}
                             </div>
                         </div>
                         """
@@ -1618,7 +1610,7 @@ elif menu == "6. 캘린더":
                             <div class="cal-card" style="background: {bg_css}; border: {border_css};">
                                 <div style="display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px;">
                                     <span style="font-weight: 900; font-size: 16px; color: {day_color}; letter-spacing: -0.5px;">{d_num}{badge_target}</span>
-                                    <span style="font-size: 10.5px; font-weight: 700; color: #94a3b8;">{format_k(plan_q)}</span>
+                                    <span style="font-size: 10.5px; font-weight: 700; color: #94a3b8;">계획 {format_k(plan_q)}</span>
                                 </div>
                                 {board_content_html}
                             </div>
@@ -1627,7 +1619,7 @@ elif menu == "6. 캘린더":
                         """
                         render_html(full_cell_html)
 
-                        btn_label = f"🔍 {unique_models_cnt}종 상세" if (plan_q > 0 or act_q > 0) else f"🔍 {d_num}일"
+                        btn_label = f"🔍 상세 ({unique_models_cnt}종)" if (plan_q > 0 or act_q > 0) else f"🔍 {d_num}일"
                         if st.button(btn_label, key=f"btn_pop_{selected_m}_{d_num}", use_container_width=True):
                             if hasattr(st, "dialog"):
                                 show_day_detail_dialog(d_num, selected_m, cur_year, d_info)
@@ -1637,7 +1629,7 @@ elif menu == "6. 캘린더":
 
         st.divider()
 
-        st.markdown(f"### 📈 {selected_m}월 일자별 공급 추이 및 예상 매출")
+        st.markdown(f"### 📈 {selected_m}월 일자별 공급 수량 및 예상 매출 추이")
         trend_days = [f"{selected_m}/{d:02d}" for d in range(1, num_days + 1)]
         trend_qtys = [day_supply_map[d]['total'] for d in range(1, num_days + 1)]
         trend_revs = [round(day_supply_map[d]['total_rev'], 2) for d in range(1, num_days + 1)]
@@ -1654,7 +1646,7 @@ elif menu == "6. 캘린더":
             mode="lines+markers", line=dict(color="#f43f5e", width=2.5), marker=dict(size=6, color="#f43f5e")
         ))
         fig_cal_trend.update_layout(
-            title=dict(text=f"<b>{selected_m}월 일자별 공급 계획 수량 및 예상 매출액</b>", font=dict(size=16, color='#0f172a', family='Pretendard')),
+            title=dict(text=f"<b>{selected_m}월 일자별 공급 계획 수량 (막대) 및 예상 매출액 (꺾은선)</b>", font=dict(size=16, color='#0f172a', family='Pretendard')),
             plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
             hovermode='x unified', margin=dict(l=10, r=10, t=50, b=10),
             xaxis=dict(tickangle=-45, showgrid=False, tickfont=dict(color='#64748b')),
