@@ -124,7 +124,7 @@ if 'data_loaded' not in st.session_state:
     st.session_state['data_loaded'] = False
 
 default_kpis = {
-    'daily': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pending_gr_rev': 0.0},
+    'daily': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0, 'pending_gr_rev': 0.0, 'carryover_qty': 0},
     'weekly': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0, 'pending_gr_rev': 0.0, 'carryover_qty': 0},
     'monthly': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0, 'pending_gr_rev': 0.0, 'carryover_qty': 0}
 }
@@ -135,6 +135,8 @@ else:
         if period not in st.session_state['kpi_data']:
             st.session_state['kpi_data'][period] = default_kpis[period]
         else:
+            st.session_state['kpi_data'][period].setdefault('pure_rev_a', 0.0)
+            st.session_state['kpi_data'][period].setdefault('carryover_rev', 0.0)
             st.session_state['kpi_data'][period].setdefault('pending_gr_rev', 0.0)
             st.session_state['kpi_data'][period].setdefault('carryover_qty', 0)
 
@@ -1180,11 +1182,29 @@ if menu == "7. 데이터 관리 (Admin)":
             
             kpi_temp = st.session_state['kpi_data']
             
-            # 1. 요약 KPI 편집 데이터프레임
+            # 1. 요약 KPI 편집 데이터프레임 (분리된 매출 항목 반영)
             kpi_df = pd.DataFrame([
-                {"구분": "당일 (Daily)", "생산실적(개)": int(kpi_temp['daily'].get('prod_a', 0)), "출하실적(개)": int(kpi_temp['daily'].get('ship_a', 0)), "매출실적(억원)": float(kpi_temp['daily'].get('rev_a', 0.0))},
-                {"구분": "주간 (Weekly)", "생산실적(개)": int(kpi_temp['weekly'].get('prod_a', 0)), "출하실적(개)": int(kpi_temp['weekly'].get('ship_a', 0)), "매출실적(억원)": float(kpi_temp['weekly'].get('rev_a', 0.0))},
-                {"구분": "월간 (Monthly)", "생산실적(개)": int(kpi_temp['monthly'].get('prod_a', 0)), "출하실적(개)": int(kpi_temp['monthly'].get('ship_a', 0)), "매출실적(억원)": float(kpi_temp['monthly'].get('rev_a', 0.0))}
+                {
+                    "구분": "당일 (Daily)", 
+                    "생산실적(개)": int(kpi_temp['daily'].get('prod_a', 0)), 
+                    "출하실적(개)": int(kpi_temp['daily'].get('ship_a', 0)), 
+                    "확정매출(억원)": float(kpi_temp['daily'].get('pure_rev_a', kpi_temp['daily'].get('rev_a', 0.0))),
+                    "미입고매출(억원)": float(kpi_temp['daily'].get('pending_gr_rev', 0.0))
+                },
+                {
+                    "구분": "주간 (Weekly)", 
+                    "생산실적(개)": int(kpi_temp['weekly'].get('prod_a', 0)), 
+                    "출하실적(개)": int(kpi_temp['weekly'].get('ship_a', 0)), 
+                    "확정매출(억원)": float(kpi_temp['weekly'].get('pure_rev_a', 0.0) + kpi_temp['weekly'].get('carryover_rev', 0.0)),
+                    "미입고매출(억원)": float(kpi_temp['weekly'].get('pending_gr_rev', 0.0))
+                },
+                {
+                    "구분": "월간 (Monthly)", 
+                    "생산실적(개)": int(kpi_temp['monthly'].get('prod_a', 0)), 
+                    "출하실적(개)": int(kpi_temp['monthly'].get('ship_a', 0)), 
+                    "확정매출(억원)": float(kpi_temp['monthly'].get('pure_rev_a', 0.0) + kpi_temp['monthly'].get('carryover_rev', 0.0)),
+                    "미입고매출(억원)": float(kpi_temp['monthly'].get('pending_gr_rev', 0.0))
+                }
             ])
             
             st.markdown("<h5 style='color: #0f172a; margin-bottom: 10px;'>1. 핵심 지표 (Overview) 수동 편집</h5>", unsafe_allow_html=True)
@@ -1211,23 +1231,23 @@ if menu == "7. 데이터 관리 (Admin)":
                 edited_site = None
 
             if st.button("⚠️ 입력한 데이터로 클라우드 덮어쓰기 및 전체 동기화", type="primary"):
-                # KPI 덮어쓰기
-                st.session_state['kpi_data']['daily']['prod_a'] = int(edited_kpi.loc[0, "생산실적(개)"])
-                st.session_state['kpi_data']['daily']['ship_a'] = int(edited_kpi.loc[0, "출하실적(개)"])
-                st.session_state['kpi_data']['daily']['rev_a'] = float(edited_kpi.loc[0, "매출실적(억원)"])
+                # KPI 덮어쓰기 로직 (일/주/월 분할 적용)
+                for idx, period in enumerate(['daily', 'weekly', 'monthly']):
+                    st.session_state['kpi_data'][period]['prod_a'] = int(edited_kpi.loc[idx, "생산실적(개)"])
+                    st.session_state['kpi_data'][period]['ship_a'] = int(edited_kpi.loc[idx, "출하실적(개)"])
+                    
+                    conf_rev = float(edited_kpi.loc[idx, "확정매출(억원)"])
+                    pend_rev = float(edited_kpi.loc[idx, "미입고매출(억원)"])
+                    
+                    st.session_state['kpi_data'][period]['pure_rev_a'] = conf_rev
+                    st.session_state['kpi_data'][period]['carryover_rev'] = 0.0  # 확정매출에 이월이 이미 포함된 것으로 간주
+                    st.session_state['kpi_data'][period]['pending_gr_rev'] = pend_rev
+                    st.session_state['kpi_data'][period]['rev_a'] = conf_rev + pend_rev
                 
-                st.session_state['kpi_data']['weekly']['prod_a'] = int(edited_kpi.loc[1, "생산실적(개)"])
-                st.session_state['kpi_data']['weekly']['ship_a'] = int(edited_kpi.loc[1, "출하실적(개)"])
-                st.session_state['kpi_data']['weekly']['rev_a'] = float(edited_kpi.loc[1, "매출실적(억원)"])
-                
-                st.session_state['kpi_data']['monthly']['prod_a'] = int(edited_kpi.loc[2, "생산실적(개)"])
-                st.session_state['kpi_data']['monthly']['ship_a'] = int(edited_kpi.loc[2, "출하실적(개)"])
-                st.session_state['kpi_data']['monthly']['rev_a'] = float(edited_kpi.loc[2, "매출실적(억원)"])
-                
-                # 월간 차트 업데이트
+                # 월간 차트 데이터 업데이트
                 st.session_state['chart_data']['monthly_prod_a'] = [int(edited_kpi.loc[2, "생산실적(개)"])]
                 st.session_state['chart_data']['monthly_ship_a'] = [int(edited_kpi.loc[2, "출하실적(개)"])]
-                st.session_state['chart_data']['monthly_rev_a'] = [float(edited_kpi.loc[2, "매출실적(억원)"])]
+                st.session_state['chart_data']['monthly_rev_a'] = [float(edited_kpi.loc[2, "확정매출(억원)"]) + float(edited_kpi.loc[2, "미입고매출(억원)"])]
 
                 # 모델별 데이터 업데이트 (비율 자동 재계산)
                 if edited_model is not None:
