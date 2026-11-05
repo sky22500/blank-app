@@ -165,7 +165,7 @@ if not st.session_state.get('data_loaded'):
     if saved_state:
         for k, v in saved_state.items():
             st.session_state[k] = v
-            # JSON 동기화 시 캘린더 매칭을 위해 일자(key)를 정수형(int)으로 강제 변환
+            # JSON 파싱 시 일자(key) 문자열을 정수형으로 강제 변환하여 캘린더 매칭 오류 방지
             if k == "actual_by_day" and isinstance(v, dict):
                 st.session_state["actual_by_day"] = {int(day): data for day, data in v.items()}
 
@@ -887,7 +887,7 @@ render_html("""
 </style>
 """)
 
-# 5. 사이드바
+# 5. 사이드바 (업데이트 로직 수정)
 with st.sidebar:
     menu = st.radio("📂 Folder", (
         "🏠 현황", "1. 모델별 출하실적", "2. 모델별 생산실적", 
@@ -896,12 +896,15 @@ with st.sidebar:
     ))
     
     st.markdown("---")
+    # 버튼 클릭 시에도 캘린더 날짜 키(Int) 강제 변환 적용
     if st.button("🔄 최신 실적 불러오기", use_container_width=True):
         fetch_db_state_cached.clear()
         latest = fetch_db_state_cached()
         if latest:
             for k, v in latest.items():
                 st.session_state[k] = v
+                if k == "actual_by_day" and isinstance(v, dict):
+                    st.session_state["actual_by_day"] = {int(day): data for day, data in v.items()}
             st.success("최신 데이터가 동기화되었습니다!")
             st.rerun()
         else:
