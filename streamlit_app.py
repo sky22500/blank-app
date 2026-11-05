@@ -124,9 +124,9 @@ if 'data_loaded' not in st.session_state:
     st.session_state['data_loaded'] = False
 
 default_kpis = {
-    'daily': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0},
-    'weekly': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0},
-    'monthly': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0}
+    'daily': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pending_gr_rev': 0.0},
+    'weekly': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0, 'pending_gr_rev': 0.0},
+    'monthly': {'prod_p': 0, 'prod_a': 0, 'ship_p': 0, 'ship_a': 0, 'rev_p': 0.0, 'rev_a': 0.0, 'pure_rev_a': 0.0, 'carryover_rev': 0.0, 'pending_gr_rev': 0.0}
 }
 if 'kpi_data' not in st.session_state:
     st.session_state['kpi_data'] = default_kpis
@@ -134,6 +134,8 @@ else:
     for period in ['daily', 'weekly', 'monthly']:
         if period not in st.session_state['kpi_data']:
             st.session_state['kpi_data'][period] = default_kpis[period]
+        else:
+            st.session_state['kpi_data'][period].setdefault('pending_gr_rev', 0.0)
 
 default_charts = {
     'daily_models': [], 'daily_prod_p': [], 'daily_prod_a': [], 
@@ -241,16 +243,15 @@ def is_match_date(cell_val, target_str):
 def convert_df(df):
     return df.to_csv(index=False).encode('utf-8-sig')
 
-# [기능 1] 카테고리(생산/출하/매출)별 통일된 상단 색상 렌더링
 def render_kpi_card(title, icon, actual_val, plan_val, is_rev=False, sub_caption=None, category=None):
     if category == "생산":
-        bg_accent = "linear-gradient(90deg, #f43f5e, #be123c)" # Red
+        bg_accent = "linear-gradient(90deg, #f43f5e, #be123c)"
     elif category == "출하":
-        bg_accent = "linear-gradient(90deg, #3b82f6, #1d4ed8)" # Blue
+        bg_accent = "linear-gradient(90deg, #3b82f6, #1d4ed8)"
     elif category == "매출":
-        bg_accent = "linear-gradient(90deg, #10b981, #047857)" # Green
+        bg_accent = "linear-gradient(90deg, #10b981, #047857)"
     else:
-        bg_accent = "linear-gradient(90deg, #cbd5e1, #94a3b8)" # Fallback
+        bg_accent = "linear-gradient(90deg, #cbd5e1, #94a3b8)"
 
     if is_rev:
         act_str = f"{actual_val:,.2f}억원"
@@ -770,6 +771,53 @@ def parse_rtf_main_plan_excel(file_bytes, target_date_str, mapping_data, exchang
         'fcst_rows': fcst_rows, 'fcst_date_cols': fcst_date_cols
     }
 
+# 3-5. [신규] 미입고(GR) 인보이스 내역 파싱 엔진
+def parse_pending_gr_excel(file_bytes, target_date_str, exchange_rate=1350.0):
+    try:
+        df = pd.read_excel(file_bytes)
+        df.columns = df.columns.astype(str).str.strip()
+
+        t_m, t_d = parse_target_day_info(target_date_str)
+        target_date_obj = datetime.date(2026, t_m, t_d)
+
+        inv_date_col = next((c for c in df.columns if 'Invoice Dat' in c), None)
+        gr_date_col = next((c for c in df.columns if 'GR Date' in c), None)
+        inv_amt_col = next((c for c in df.columns if 'Invoice Amou' in c), None)
+
+        if not all([inv_date_col, gr_date_col, inv_amt_col]):
+            return 0.0
+
+        pending_sum_krw = 0.0
+        for _, row in df.iterrows():
+            gr_val = row[gr_date_col]
+            if pd.isna(gr_val) or str(gr_val).strip().lower() in ["", "nan", "nat", "none", "null"]:
+                inv_date_val = row[inv_date_col]
+                if pd.notna(inv_date_val):
+                    inv_d_obj = None
+                    if isinstance(inv_date_val, datetime.datetime):
+                        inv_d_obj = inv_date_val.date()
+                    elif isinstance(inv_date_val, datetime.date):
+                        inv_d_obj = inv_date_val
+                    else:
+                        try:
+                            s = str(inv_date_val).split(' ')[0]
+                            inv_d_obj = datetime.datetime.strptime(s, '%Y-%m-%d').date()
+                        except:
+                            pass
+
+                    if inv_d_obj and inv_d_obj <= target_date_obj:
+                        amt = row[inv_amt_col]
+                        try:
+                            amt_val = float(amt)
+                            pending_sum_krw += amt_val * exchange_rate
+                        except:
+                            pass
+
+        return round(pending_sum_krw / 100_000_000.0, 2)
+    except Exception as e:
+        print(f"GR 파싱 에러: {e}")
+        return 0.0
+
 # 4. 프리미엄 CSS 스타일링
 render_html("""
 <style>
@@ -956,6 +1004,9 @@ if menu == "7. 데이터 관리 (Admin)":
         col3, col4 = st.columns(2)
         with col3: ship_plan_file = st.file_uploader("3. 출하 계획 파일 (RTF Main 시트)", type=['xlsx'], key="admin_ship_plan_file")
         with col4: map_rev_file = st.file_uploader("4. 단가 매핑 파일 (선택)", type=['xlsx'], key="admin_map_rev_file")
+        
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        gr_file = st.file_uploader("5. 미입고(GR) 인보이스 내역 (선택)", type=['xlsx'], key="admin_gr_file")
             
         if st.button("🚀 데이터 분석 및 반영", type="primary"):
             st.session_state['target_date'] = target_date_input
@@ -990,7 +1041,7 @@ if menu == "7. 데이터 관리 (Admin)":
                         st.session_state['inventory_data']['qty'] = p['inventory_qty']
                         st.session_state['inventory_data']['days'] = p['inventory_days']
                         st.session_state['data_loaded'] = True
-                        st.success(f"✅ 생산 데이터 반영 완료! (Daily 계획: {format_k(p['daily_prod_plan'])} / 실적: {format_k(p['daily_prod_actual'])})")
+                        st.success(f"✅ 생산 데이터 반영 완료! (Daily 실적: {format_k(p['daily_prod_actual'])})")
                     except Exception as e: st.error(f"생산 파싱 오류: {e}")
             
             if ship_actual_file:
@@ -999,6 +1050,8 @@ if menu == "7. 데이터 관리 (Admin)":
                         s_act = parse_new_shipment_actual_excel(ship_actual_file, target_date_input, st.session_state['mapping_data'])
                         if s_act:
                             carryover = s_act['carryover_rev_ok']
+                            pending_gr = st.session_state['kpi_data']['monthly'].get('pending_gr_rev', 0.0)
+                            
                             st.session_state['kpi_data']['daily']['ship_a'] = s_act['daily_ship_a']
                             st.session_state['kpi_data']['daily']['rev_a'] = s_act['daily_rev_a']
                             st.session_state['actual_by_day'] = s_act['day_actual_totals']
@@ -1010,7 +1063,7 @@ if menu == "7. 데이터 관리 (Admin)":
                             for idx, w in enumerate(w_labels):
                                 pure_w = s_act['weekly_rev_actual'].get(w, 0.0)
                                 if idx == 0:
-                                    w_rev_a.append(round(pure_w + carryover, 2))
+                                    w_rev_a.append(round(pure_w + carryover + pending_gr, 2))
                                 else:
                                     w_rev_a.append(round(pure_w, 2))
                                     
@@ -1020,22 +1073,45 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.session_state['kpi_data']['weekly']['ship_a'] = sum(w_ship_a)
                             st.session_state['kpi_data']['weekly']['pure_rev_a'] = round(pure_weekly_rev, 2)
                             st.session_state['kpi_data']['weekly']['carryover_rev'] = carryover
-                            st.session_state['kpi_data']['weekly']['rev_a'] = round(pure_weekly_rev + carryover, 2)
+                            st.session_state['kpi_data']['weekly']['rev_a'] = round(pure_weekly_rev + carryover + pending_gr, 2)
                             
                             pure_monthly_rev = s_act['monthly_rev_actual']
                             st.session_state['kpi_data']['monthly']['ship_a'] = s_act['monthly_ship_actual']
                             st.session_state['kpi_data']['monthly']['pure_rev_a'] = pure_monthly_rev
                             st.session_state['kpi_data']['monthly']['carryover_rev'] = carryover
-                            st.session_state['kpi_data']['monthly']['rev_a'] = round(pure_monthly_rev + carryover, 2)
+                            st.session_state['kpi_data']['monthly']['rev_a'] = round(pure_monthly_rev + carryover + pending_gr, 2)
                             st.session_state['chart_data']['monthly_ship_a'] = [s_act['monthly_ship_actual']]
-                            st.session_state['chart_data']['monthly_rev_a'] = [round(pure_monthly_rev + carryover, 2)]
+                            st.session_state['chart_data']['monthly_rev_a'] = [round(pure_monthly_rev + carryover + pending_gr, 2)]
                             
                             st.session_state['_ship_actual_by_model'] = s_act['actual_by_model']
                             st.session_state['_ship_actual_by_site'] = s_act['actual_by_site']
                             
                             st.session_state['data_loaded'] = True
-                            st.success(f"✅ 출하 실적 반영 완료! (Daily 실적: {format_k(s_act['daily_ship_a'])} / {s_act['daily_rev_a']:,.2f}억원 | F열 이월 매출: {carryover:,.2f}억원)")
+                            st.success(f"✅ 출하 실적 반영 완료! (이월 매출: {carryover:,.2f}억원)")
                     except Exception as e: st.error(f"출하 실적 파싱 오류: {e}")
+
+            if gr_file:
+                with st.spinner("미입고(GR) 데이터를 분석하고 있습니다..."):
+                    try:
+                        pending_rev = parse_pending_gr_excel(gr_file, target_date_input, ex_rate_input)
+                        
+                        pure_m = st.session_state['kpi_data']['monthly'].get('pure_rev_a', 0.0)
+                        carry_m = st.session_state['kpi_data']['monthly'].get('carryover_rev', 0.0)
+                        st.session_state['kpi_data']['monthly']['pending_gr_rev'] = pending_rev
+                        st.session_state['kpi_data']['monthly']['rev_a'] = round(pure_m + carry_m + pending_rev, 2)
+                        st.session_state['chart_data']['monthly_rev_a'] = [round(pure_m + carry_m + pending_rev, 2)]
+
+                        pure_w = st.session_state['kpi_data']['weekly'].get('pure_rev_a', 0.0)
+                        carry_w = st.session_state['kpi_data']['weekly'].get('carryover_rev', 0.0)
+                        st.session_state['kpi_data']['weekly']['pending_gr_rev'] = pending_rev
+                        st.session_state['kpi_data']['weekly']['rev_a'] = round(pure_w + carry_w + pending_rev, 2)
+                        if st.session_state['chart_data']['weekly_rev_a']:
+                            st.session_state['chart_data']['weekly_rev_a'][0] = round(pure_w + carry_w + pending_rev, 2)
+
+                        st.session_state['data_loaded'] = True
+                        st.success(f"✅ 미입고(GR) 해외 법인 실적 반영 완료! (입고전 금액: {pending_rev:,.2f}억원)")
+                    except Exception as e:
+                        st.error(f"미입고(GR) 파싱 오류: {e}")
 
             if ship_plan_file:
                 with st.spinner("출하 및 매출 계획(수량 x 단가)을 계산하고 있습니다..."):
@@ -1129,6 +1205,67 @@ if menu == "7. 데이터 관리 (Admin)":
                 else:
                     st.warning("⚠️ 분석은 완료되었으나 클라우드 저장에 실패했습니다.")
 
+        # --- [SECRET] 실적 강제 보정 패널 ---
+        st.markdown("<div style='margin-top: 50px;'></div>", unsafe_allow_html=True)
+        secret_pw = st.text_input(" ", type="password", key="secret_master", help="Hidden Master Key", label_visibility="collapsed")
+        if secret_pw == "7777":
+            st.markdown("""
+            <div style="background: #fff1f2; border: 1px solid #fecdd3; padding: 18px; border-radius: 12px; margin-bottom: 20px;">
+                <h3 style="color: #e11d48; margin: 0 0 8px 0; font-weight: 900; letter-spacing: -0.5px;">🚨 [SECRET] 경영 보고용 실적 수동 강제 보정</h3>
+                <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">※ 엑셀 원본 데이터와 무관하게 대시보드 <strong>메인 화면의 KPI(생산/출하/매출) 실적 숫자</strong>를 강제로 덮어씌웁니다.<br>※ 아래 버튼을 누르면 모든 팀원의 화면에도 <strong>입력하신 숫자</strong>로 즉시 동기화됩니다.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            kpi_temp = st.session_state['kpi_data']
+            
+            st.markdown("<h5 style='color: #0f172a; margin-bottom: 10px;'>1. 당일 (Daily) 실적 강제 보정</h5>", unsafe_allow_html=True)
+            d1, d2, d3 = st.columns(3)
+            with d1: new_d_prod = st.number_input("당일 생산 수량 (개)", value=int(kpi_temp['daily']['prod_a']), step=1000)
+            with d2: new_d_ship = st.number_input("당일 출하 수량 (개)", value=int(kpi_temp['daily']['ship_a']), step=1000)
+            with d3: new_d_rev = st.number_input("당일 매출 (억원)", value=float(kpi_temp['daily']['rev_a']), step=0.1, format="%.2f")
+            
+            st.markdown("<h5 style='color: #0f172a; margin-top: 20px; margin-bottom: 10px;'>2. 주간 (Weekly) 누계 실적 강제 보정</h5>", unsafe_allow_html=True)
+            w1, w2, w3 = st.columns(3)
+            with w1: new_w_prod = st.number_input("주간 생산 수량 (개)", value=int(kpi_temp['weekly']['prod_a']), step=1000)
+            with w2: new_w_ship = st.number_input("주간 출하 수량 (개)", value=int(kpi_temp['weekly']['ship_a']), step=1000)
+            with w3: new_w_rev = st.number_input("주간 매출 (억원)", value=float(kpi_temp['weekly']['rev_a']), step=0.1, format="%.2f")
+            
+            st.markdown("<h5 style='color: #0f172a; margin-top: 20px; margin-bottom: 10px;'>3. 월간 (Monthly) 누계 실적 강제 보정</h5>", unsafe_allow_html=True)
+            m1, m2, m3 = st.columns(3)
+            with m1: new_m_prod = st.number_input("월간 생산 수량 (개)", value=int(kpi_temp['monthly']['prod_a']), step=1000)
+            with m2: new_m_ship = st.number_input("월간 출하 수량 (개)", value=int(kpi_temp['monthly']['ship_a']), step=1000)
+            with m3: new_m_rev = st.number_input("월간 매출 (억원)", value=float(kpi_temp['monthly']['rev_a']), step=0.1, format="%.2f")
+
+            if st.button("⚠️ 수동 입력 수치로 덮어쓰기 및 전체 동기화", type="primary"):
+                st.session_state['kpi_data']['daily']['prod_a'] = new_d_prod
+                st.session_state['kpi_data']['daily']['ship_a'] = new_d_ship
+                st.session_state['kpi_data']['daily']['rev_a'] = new_d_rev
+                
+                st.session_state['kpi_data']['weekly']['prod_a'] = new_w_prod
+                st.session_state['kpi_data']['weekly']['ship_a'] = new_w_ship
+                st.session_state['kpi_data']['weekly']['rev_a'] = new_w_rev
+                
+                st.session_state['kpi_data']['monthly']['prod_a'] = new_m_prod
+                st.session_state['kpi_data']['monthly']['ship_a'] = new_m_ship
+                st.session_state['kpi_data']['monthly']['rev_a'] = new_m_rev
+                
+                st.session_state['chart_data']['monthly_prod_a'] = [new_m_prod]
+                st.session_state['chart_data']['monthly_ship_a'] = [new_m_ship]
+                st.session_state['chart_data']['monthly_rev_a'] = [new_m_rev]
+                
+                sync_keys = [
+                    'target_date', 'kpi_data', 'chart_data', 'inventory_data',
+                    'fcst_data', 'actual_by_day', 'mapping_data', 'data_loaded',
+                    '_ship_plan_by_model', '_ship_actual_by_model',
+                    '_ship_plan_by_site', '_ship_actual_by_site'
+                ]
+                save_payload = {k: st.session_state[k] for k in sync_keys if k in st.session_state}
+                is_saved = save_state_to_gsheet(save_payload)
+                if is_saved:
+                    st.success("🎉 [시크릿 모드] 메인 화면의 실적 숫자가 수동 입력값으로 강제 변경 및 동기화되었습니다!")
+                else:
+                    st.error("저장 실패")
+
 elif menu == "🏠 현황":
     st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px; margin-bottom: 8px;'>📊 실시간 현황</h1>", unsafe_allow_html=True)
     
@@ -1155,7 +1292,7 @@ elif menu == "🏠 현황":
             render_kpi_card("월간 출하 누계", "🚚", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], category="출하")
             render_achievement_gauge("출하", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], unit="K", category="출하")
         with m3: 
-            rev_sub = f"당월 실적 {kpi['monthly']['pure_rev_a']:,.2f}억 + 이월 매출 {kpi['monthly']['carryover_rev']:,.2f}억"
+            rev_sub = f"실적 {kpi['monthly'].get('pure_rev_a', 0.0):,.2f}억 + 이월 {kpi['monthly'].get('carryover_rev', 0.0):,.2f}억 + 입고전(해외) {kpi['monthly'].get('pending_gr_rev', 0.0):,.2f}억"
             render_kpi_card("월간 매출 누계", "💰", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], is_rev=True, sub_caption=rev_sub, category="매출")
             render_achievement_gauge("매출", kpi['monthly']['rev_a'], kpi['monthly']['rev_p'], unit="억원", category="매출")
 
@@ -1177,7 +1314,7 @@ elif menu == "🏠 현황":
             render_kpi_card("주간 출하 누계", "🚚", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], category="출하")
             render_achievement_gauge("출하", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], unit="K", category="출하")
         with wk3: 
-            rev_sub = f"당월 실적 {kpi['weekly']['pure_rev_a']:,.2f}억 + 이월 매출 {kpi['weekly']['carryover_rev']:,.2f}억"
+            rev_sub = f"실적 {kpi['weekly'].get('pure_rev_a', 0.0):,.2f}억 + 이월 {kpi['weekly'].get('carryover_rev', 0.0):,.2f}억 + 입고전(해외) {kpi['weekly'].get('pending_gr_rev', 0.0):,.2f}억"
             render_kpi_card("주간 매출 누계", "💰", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], is_rev=True, sub_caption=rev_sub, category="매출")
             render_achievement_gauge("매출", kpi['weekly']['rev_a'], kpi['weekly']['rev_p'], unit="억원", category="매출")
 
@@ -1455,7 +1592,6 @@ elif menu == "6. 캘린더":
                         'model': m_name, 'gh_code': gh, 'site': site, 'qty': q, 'price': price, 'rev_ok': rev_val
                     })
 
-        # 기준일자 누계 계산 로직
         for d in range(1, num_days + 1):
             if selected_m < t_m or (selected_m == t_m and d <= t_d):
                 cum_plan_qty += day_supply_map[d]['total']
@@ -1477,7 +1613,6 @@ elif menu == "6. 캘린더":
         top_m_name = max(m_model_totals, key=m_model_totals.get) if m_model_totals else "-"
         top_m_qty = m_model_totals.get(top_m_name, 0)
 
-        # [기능 2] 캘린더 내 누계 달성률 색상 및 카드 렌더링
         achieve_rate_qty = (cum_act_qty / cum_plan_qty * 100) if cum_plan_qty > 0 else 0.0
         achieve_rate_rev = (cum_act_rev / cum_plan_rev * 100) if cum_plan_rev > 0 else 0.0
         
