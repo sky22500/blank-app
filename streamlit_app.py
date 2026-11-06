@@ -1386,7 +1386,7 @@ elif menu == "🏠 현황":
         render_html(f"""
         <div style="background: linear-gradient(135deg, #4f46e5, #3b82f6); border-radius: 16px; padding: 18px 24px; color: white; box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.3); text-align: right; margin-top: 10px; position: relative; overflow: hidden;">
             <div style="position: absolute; top: -10px; left: -10px; opacity: 0.1; font-size: 80px;">💰</div>
-            <div style="font-size: 13px; font-weight: 600; opacity: 0.9; letter-spacing: 0.5px; margin-bottom: 4px; position: relative; z-index: 1;">현재까지 누계 매출액 (확정 + 미입고)</div>
+            <div style="font-size: 13px; font-weight: 600; opacity: 0.9; letter-spacing: 0.5px; margin-bottom: 4px; position: relative; z-index: 1;">현재까지 누계 매출액 (한국/베트남 + 해외)</div>
             <div style="font-size: 32px; font-weight: 900; letter-spacing: -1px; position: relative; z-index: 1;">{grand_total_rev:,.2f} <span style="font-size: 18px; font-weight: 600;">억원</span></div>
             <div style="font-size: 12px; opacity: 0.8; margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 6px; position: relative; z-index: 1;">목표액: {grand_plan_rev:,.2f} 억원</div>
         </div>
