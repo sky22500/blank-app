@@ -167,11 +167,9 @@ if not st.session_state.get('data_loaded'):
     if saved_state:
         for k, v in saved_state.items():
             st.session_state[k] = v
-            # JSON 파싱 시 일자(key) 문자열을 정수형으로 강제 변환하여 캘린더 매칭 오류 방지
             if k == "actual_by_day" and isinstance(v, dict):
                 st.session_state["actual_by_day"] = {int(day): data for day, data in v.items()}
 
-# 유틸 함수
 def safe_cell(sheet, r, c):
     if r < 1 or c < 1 or r > sheet.max_row or c > sheet.max_column:
         return None
@@ -683,7 +681,7 @@ def parse_new_shipment_actual_excel(file_bytes, target_date_str, mapping_data):
                     if curr_site not in site_data: site_data[curr_site] = {'Actual': 0, 'Rev_Act': 0.0}
                     site_data[curr_site]['Actual'] += q_val
                     site_data[curr_site]['Rev_Act'] += rev_ok
-
+                    
     if total_carryover_krw == 0 and total_carryover_qty > 0:
         gh_map = mapping_data.get('gh_map', {})
         suffix_map = mapping_data.get('suffix_map', {})
@@ -853,6 +851,7 @@ def parse_rtf_main_plan_excel(file_bytes, target_date_str, mapping_data, exchang
         'fcst_rows': fcst_rows, 'fcst_date_cols': fcst_date_cols
     }
 
+# [수정] 3-5. 미입고(GR) 인보이스 내역 파싱 엔진
 def parse_pending_gr_excel(file_bytes, target_date_str, exchange_rate=1350.0):
     try:
         df = pd.read_excel(file_bytes)
@@ -861,11 +860,14 @@ def parse_pending_gr_excel(file_bytes, target_date_str, exchange_rate=1350.0):
         gr_date_col = next((c for c in df.columns if 'GR Date' in c), None)
         inv_amt_col = next((c for c in df.columns if 'Invoice Amou' in c), None)
         bl_col = next((c for c in df.columns if 'Bill of Lading' in c), None)
+        plant_name_col = next((c for c in df.columns if 'Plant Name' in c), None)
 
         if not all([gr_date_col, inv_amt_col, bl_col]):
-            return 0.0
+            return {'total': 0.0, 'siel': 0.0, 'other': 0.0}
 
-        pending_sum_krw = 0.0
+        pending_siel_krw = 0.0
+        pending_other_krw = 0.0
+        
         for _, row in df.iterrows():
             gr_val = row[gr_date_col]
             if pd.isna(gr_val) or str(gr_val).strip().lower() in ["", "nan", "nat", "none", "null"]:
@@ -874,14 +876,25 @@ def parse_pending_gr_excel(file_bytes, target_date_str, exchange_rate=1350.0):
                     amt = row[inv_amt_col]
                     try:
                         amt_val = float(amt)
-                        pending_sum_krw += amt_val * exchange_rate
+                        is_siel = False
+                        if plant_name_col and 'SIEL' in str(row[plant_name_col]).upper():
+                            is_siel = True
+                        
+                        if is_siel:
+                            pending_siel_krw += amt_val * exchange_rate
+                        else:
+                            pending_other_krw += amt_val * exchange_rate
                     except:
                         pass
 
-        return round(pending_sum_krw / 100_000_000.0, 2)
+        return {
+            'siel': round(pending_siel_krw / 100_000_000.0, 2),
+            'other': round(pending_other_krw / 100_000_000.0, 2),
+            'total': round((pending_siel_krw + pending_other_krw) / 100_000_000.0, 2)
+        }
     except Exception as e:
         print(f"GR 파싱 에러: {e}")
-        return 0.0
+        return {'total': 0.0, 'siel': 0.0, 'other': 0.0}
 
 # 4. 프리미엄 CSS 스타일링
 render_html("""
@@ -1096,9 +1109,10 @@ if menu == "7. 데이터 관리 (Admin)":
             if gr_file:
                 with st.spinner("미입고(GR) 데이터를 분석하고 있습니다..."):
                     try:
-                        pending_rev = parse_pending_gr_excel(gr_file, target_date_input, ex_rate_input)
+                        gr_res = parse_pending_gr_excel(gr_file, target_date_input, ex_rate_input)
+                        pending_siel = gr_res.get('siel', 0.0)
+                        pending_other = gr_res.get('other', 0.0)
                         
-                        # [신규 추가] 중복 합산 방지: SIEL 당일 출하 실적 vs GR 미입고 금액 대조
                         t_m, t_d = parse_target_day_info(target_date_input)
                         siel_daily_rev = 0.0
                         
@@ -1108,13 +1122,16 @@ if menu == "7. 데이터 관리 (Admin)":
                                 if 'SIEL' in str(item.get('site', '')).upper():
                                     siel_daily_rev += item.get('rev_ok', 0.0)
                         
-                        # 0.1 억원 (1천만원) 이내 오차면 100% 일치로 간주 (환율 오차 감안)
-                        if pending_rev > 0 and abs(pending_rev - siel_daily_rev) < 0.1:
-                            st.warning(f"💡 [중복 제외] GR 미입고 금액({pending_rev:,.2f}억)이 당일 SIEL 출하실적({siel_daily_rev:,.2f}억)과 완벽히 일치합니다. 확정 매출에 이미 반영되었으므로 예상 매출에서는 0원으로 처리합니다.")
-                            pending_rev = 0.0
-                        else:
-                            st.success(f"✅ 미입고(GR) 해외 법인 실적 반영 완료! (입고전 금액: {pending_rev:,.2f}억원)")
+                        final_pending_rev = pending_other
+                        if pending_siel > 0:
+                            deducted_siel = max(0.0, pending_siel - siel_daily_rev)
+                            if deducted_siel < pending_siel:
+                                st.warning(f"💡 [중복 제외] GR 파일 내 SIEL 미입고액({pending_siel:,.2f}억) 중 당일 출하실적에 기반영된 금액({siel_daily_rev:,.2f}억)을 제외하여 합산합니다.")
+                            final_pending_rev += deducted_siel
                         
+                        pending_rev = round(final_pending_rev, 2)
+                        st.success(f"✅ 미입고(GR) 해외 법인 실적 반영 완료! (최종 합산액: {pending_rev:,.2f}억원)")
+
                         pure_m = st.session_state['kpi_data']['monthly'].get('pure_rev_a', 0.0)
                         carry_m = st.session_state['kpi_data']['monthly'].get('carryover_rev', 0.0)
                         st.session_state['kpi_data']['monthly']['pending_gr_rev'] = pending_rev
@@ -1717,26 +1734,6 @@ elif menu == "6. 캘린더":
                     day_supply_map[d]['total_rev'] += rev_val
                     day_supply_map[d]['items'].append({
                         'model': m_name, 'gh_code': gh, 'site': site, 'qty': q, 'price': price, 'rev_ok': rev_val
-                    })
-                    
-        # [핵심 로직] 과거 엑셀 데이터 누락 방지 (RTF 특성상 지난 날짜는 0이 되는 문제 해결)
-        # 계획(Plan)이 0인데 실적(Actual)이 존재하는 날짜는 실적을 계획으로 덮어씌워 초기값을 살림
-        for d in range(1, num_days + 1):
-            a_data = actual_by_day.get(d, {'qty': 0, 'rev': 0.0, 'items': []})
-            a_q = a_data.get('qty', 0)
-            a_r = a_data.get('rev', 0.0)
-            
-            if day_supply_map[d]['total'] == 0 and a_q > 0:
-                day_supply_map[d]['total'] = a_q
-                day_supply_map[d]['total_rev'] = a_r
-                for a_item in a_data.get('items', []):
-                    day_supply_map[d]['items'].append({
-                        'model': a_item.get('model', ''),
-                        'gh_code': a_item.get('gh_code', ''),
-                        'site': a_item.get('site', ''),
-                        'qty': a_item.get('qty', 0),
-                        'price': a_item.get('price', 0.0),
-                        'rev_ok': a_item.get('rev_ok', 0.0)
                     })
 
         for d in range(1, num_days + 1):
