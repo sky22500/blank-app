@@ -1104,10 +1104,12 @@ if menu == "7. 데이터 관리 (Admin)":
                             
                             st.session_state['data_loaded'] = True
                             st.success(f"✅ 출하 실적 반영 완료! (이월 수량: {format_k(carry_qty)} / 이월 매출: {carryover:,.2f}억원)")
-            except Exception as e: st.error(f"출하 실적 파싱 오류: {e}")
-             if gr_file:
-                     with st.spinner("미입고(GR) 데이터를 분석하고 있습니다..."):
-                       try:
+                    except Exception as e:
+                        st.error(f"출하 실적 파싱 오류: {e}")
+
+            if gr_file:
+                with st.spinner("미입고(GR) 데이터를 분석하고 있습니다..."):
+                    try:
                         gr_res = parse_pending_gr_excel(gr_file, target_date_input, ex_rate_input)
                         pending_siel = gr_res.get('siel', 0.0)
                         pending_other = gr_res.get('other', 0.0)
