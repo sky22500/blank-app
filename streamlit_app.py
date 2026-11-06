@@ -1378,159 +1378,239 @@ elif menu == "🏠 현황":
     tab_monthly, tab_weekly, tab_daily = st.tabs(["🗓️ Monthly", "📊 Weekly", "📅 Daily"])
 
     with tab_monthly:
-        row1_1, row1_2, row1_3 = st.columns(3)
-        row2_1, row2_2, row2_3, row2_4 = st.columns(4)
+        # 이월 데이터 (생산 누계 아래에 별도로 표시)
+        m_carry_qty = kpi['monthly'].get('carryover_qty', 0)
+        m_carry_rev = kpi['monthly'].get('carryover_rev', 0.0)
         
-        # Monthly VN/KR
-        m_ship_a_vn = kpi['monthly'].get('ship_a_vn', 0)
-        m_pure_rev_vn = kpi['monthly'].get('pure_rev_a_vn', 0.0)
-        m_carry_qty_vn = kpi['monthly'].get('carryover_qty_vn', 0)
-        m_carry_rev_vn = kpi['monthly'].get('carryover_rev_vn', 0.0)
-        m_plan_ship_vn = kpi['monthly'].get('ship_p_vn', 0) + m_carry_qty_vn
-        m_plan_rev_vn = round(kpi['monthly'].get('rev_p_vn', 0.0) + m_carry_rev_vn, 2)
-        
-        m_conf_rev_vn = round(m_pure_rev_vn + m_carry_rev_vn, 2)
-        m_total_rev_vn = m_conf_rev_vn
-        
-        # Monthly OS
-        m_ship_a_os = kpi['monthly'].get('ship_a_os', 0)
-        m_pure_rev_os = kpi['monthly'].get('pure_rev_a_os', 0.0)
-        m_carry_qty_os = kpi['monthly'].get('carryover_qty_os', 0)
-        m_carry_rev_os = kpi['monthly'].get('carryover_rev_os', 0.0)
-        m_pending_gr_os = kpi['monthly'].get('pending_gr_rev_os', kpi['monthly'].get('pending_gr_rev', 0.0))
-        m_plan_ship_os = kpi['monthly'].get('ship_p_os', 0) + m_carry_qty_os
-        m_plan_rev_os = round(kpi['monthly'].get('rev_p_os', 0.0) + m_carry_rev_os, 2)
-        
-        m_conf_rev_os = round(m_pure_rev_os + m_carry_rev_os, 2)
-        m_total_rev_os = round(m_conf_rev_os + m_pending_gr_os, 2)
-
-        with row1_1: 
-            render_kpi_card("1. 월간 생산 누계 (Total)", "🏭", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], category="생산")
+        # 1행: 생산 + 이월 정보 표시 패널
+        m1, m2 = st.columns([1, 3])
+        with m1: 
+            render_kpi_card("1. 월간 생산 누계", "🏭", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], category="생산")
             render_achievement_gauge("생산", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], unit="K", category="생산")
             
-        with row1_2: 
-            ship_sub_vn = f"출하실적 {format_k(m_ship_a_vn)} + 이월 {format_k(m_carry_qty_vn)}"
-            render_kpi_card("2. 월간 출하 (베트남/한국)", "🚚", m_ship_a_vn + m_carry_qty_vn, m_plan_ship_vn, sub_caption=ship_sub_vn, category="출하(VN)")
-            render_achievement_gauge("출하(VN)", m_ship_a_vn + m_carry_qty_vn, m_plan_ship_vn, unit="K", category="출하(VN)")
+            # 이월 정보 단독 카드
+            render_html(f"""
+            <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px; padding: 16px; text-align: center; margin-bottom: 24px;">
+                <div style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 8px;">⏳ 전월 이월 (Carryover)</div>
+                <div style="display: flex; justify-content: space-around; align-items: center;">
+                    <div>
+                        <div style="font-size: 10px; color: #94a3b8;">수량</div>
+                        <div style="font-size: 16px; font-weight: 900; color: #0f172a;">{format_k(m_carry_qty)}</div>
+                    </div>
+                    <div style="border-left: 1px solid #e2e8f0; height: 20px;"></div>
+                    <div>
+                        <div style="font-size: 10px; color: #94a3b8;">금액</div>
+                        <div style="font-size: 16px; font-weight: 900; color: #0f172a;">{m_carry_rev:,.2f}억</div>
+                    </div>
+                </div>
+            </div>
+            """)
             
-        with row1_3: 
-            ship_sub_os = f"출하실적 {format_k(m_ship_a_os)} + 이월 {format_k(m_carry_qty_os)}"
-            render_kpi_card("3. 월간 출하 (해외)", "✈️", m_ship_a_os + m_carry_qty_os, m_plan_ship_os, sub_caption=ship_sub_os, category="출하(OS)")
-            render_achievement_gauge("출하(OS)", m_ship_a_os + m_carry_qty_os, m_plan_ship_os, unit="K", category="출하(OS)")
+        with m2:
+            st.empty() # 간격용
 
-        with row2_1:
-            rev_sub_vn = f"출하실적 {m_pure_rev_vn:,.2f}억 + 이월 {m_carry_rev_vn:,.2f}억"
-            render_kpi_card("4. 확정 매출 (베트남/한국)", "💳", m_conf_rev_vn, m_plan_rev_vn, is_rev=True, sub_caption=rev_sub_vn, category="확정매출(VN)")
-            render_achievement_gauge("확정(VN)", m_conf_rev_vn, m_plan_rev_vn, unit="억원", category="확정매출(VN)")
-            
-        with row2_2:
-            rev_sub_os = f"출하실적 {m_pure_rev_os:,.2f}억 + 이월 {m_carry_rev_os:,.2f}억"
-            render_kpi_card("5. 확정 매출 (해외)", "💳", m_conf_rev_os, m_plan_rev_os, is_rev=True, sub_caption=rev_sub_os, category="확정매출(OS)")
-            render_achievement_gauge("확정(OS)", m_conf_rev_os, m_plan_rev_os, unit="억원", category="확정매출(OS)")
-            
-        with row2_3:
-            rev_total_sub_vn = f"확정 {m_conf_rev_vn:,.2f}억 (해외미입고 해당없음)"
-            render_kpi_card("6. 예상 매출 (베트남/한국)", "💰", m_total_rev_vn, m_plan_rev_vn, is_rev=True, sub_caption=rev_total_sub_vn, category="전체매출(VN)")
+        # 2행: 출하 2개 (이월 제외 순수 당월 분)
+        m_ship_a_vn = kpi['monthly'].get('ship_a_vn', 0)
+        m_plan_ship_vn = kpi['monthly'].get('ship_p_vn', 0)
+        m_ship_a_os = kpi['monthly'].get('ship_a_os', 0)
+        m_plan_ship_os = kpi['monthly'].get('ship_p_os', 0)
+        
+        c_ship1, c_ship2, c_ship3, c_ship4 = st.columns(4)
+        with c_ship1: 
+            render_kpi_card("2. 월간 출하 (베트남/한국)", "🚚", m_ship_a_vn, m_plan_ship_vn, category="출하(VN)")
+            render_achievement_gauge("출하(VN)", m_ship_a_vn, m_plan_ship_vn, unit="K", category="출하(VN)")
+        with c_ship2: 
+            render_kpi_card("3. 월간 출하 (해외)", "✈️", m_ship_a_os, m_plan_ship_os, category="출하(OS)")
+            render_achievement_gauge("출하(OS)", m_ship_a_os, m_plan_ship_os, unit="K", category="출하(OS)")
+        with c_ship3: st.empty()
+        with c_ship4: st.empty()
+
+        # 3행: 확정 매출 2개 (이월 제외 순수 당월 분)
+        m_pure_rev_vn = kpi['monthly'].get('pure_rev_a_vn', 0.0)
+        m_plan_rev_vn = kpi['monthly'].get('rev_p_vn', 0.0)
+        m_pure_rev_os = kpi['monthly'].get('pure_rev_a_os', 0.0)
+        m_plan_rev_os = kpi['monthly'].get('rev_p_os', 0.0)
+        
+        c_rev1, c_rev2, c_rev3, c_rev4 = st.columns(4)
+        with c_rev1:
+            render_kpi_card("4. 확정 매출 (베트남/한국)", "💳", m_pure_rev_vn, m_plan_rev_vn, is_rev=True, category="확정매출(VN)")
+            render_achievement_gauge("확정(VN)", m_pure_rev_vn, m_plan_rev_vn, unit="억원", category="확정매출(VN)")
+        with c_rev2:
+            render_kpi_card("5. 확정 매출 (해외)", "💳", m_pure_rev_os, m_plan_rev_os, is_rev=True, category="확정매출(OS)")
+            render_achievement_gauge("확정(OS)", m_pure_rev_os, m_plan_rev_os, unit="억원", category="확정매출(OS)")
+        with c_rev3: st.empty()
+        with c_rev4: st.empty()
+
+        # 4행: 예상 매출 2개 (확정 + GR 미입고만 반영 / 이월 제외)
+        m_pending_gr_os = kpi['monthly'].get('pending_gr_rev_os', kpi['monthly'].get('pending_gr_rev', 0.0))
+        m_total_rev_vn = m_pure_rev_vn # 베트남은 GR 미입고 해당 없음
+        m_total_rev_os = round(m_pure_rev_os + m_pending_gr_os, 2)
+        
+        c_tot1, c_tot2, c_tot3, c_tot4 = st.columns(4)
+        with c_tot1:
+            render_kpi_card("6. 예상 매출 (베트남/한국)", "💰", m_total_rev_vn, m_plan_rev_vn, is_rev=True, category="전체매출(VN)")
             render_achievement_gauge("예상(VN)", m_total_rev_vn, m_plan_rev_vn, unit="억원", category="전체매출(VN)")
-            
-        with row2_4:
-            rev_total_sub_os = f"확정 {m_conf_rev_os:,.2f}억 + 입고전 {m_pending_gr_os:,.2f}억"
-            render_kpi_card("7. 예상 매출 (해외)", "💰", m_total_rev_os, m_plan_rev_os, is_rev=True, sub_caption=rev_total_sub_os, category="전체매출(OS)")
+        with c_tot2:
+            sub_os = f"확정 {m_pure_rev_os:,.2f}억 + 입고전 {m_pending_gr_os:,.2f}억"
+            render_kpi_card("7. 예상 매출 (해외)", "💰", m_total_rev_os, m_plan_rev_os, is_rev=True, sub_caption=sub_os, category="전체매출(OS)")
             render_achievement_gauge("예상(OS)", m_total_rev_os, m_plan_rev_os, unit="억원", category="전체매출(OS)")
+        with c_tot3: st.empty()
+        with c_tot4: st.empty()
 
         mch1, mch2, mch3 = st.columns(3)
         m_months = cdata.get('monthly_months', ['11월'])
-        
-        m_total_carry_qty = m_carry_qty_vn + m_carry_qty_os
-        m_total_carry_rev = m_carry_rev_vn + m_carry_rev_os
-        m_chart_ship_p = [val + m_total_carry_qty for val in cdata.get('monthly_ship_p', [0])]
-        m_chart_rev_p = [round(val + m_total_carry_rev, 2) for val in cdata.get('monthly_rev_p', [0.0])]
-        m_chart_total_rev = round(m_conf_rev_vn + m_conf_rev_os + m_pending_gr_os, 2)
+        m_chart_total_rev = round(m_pure_rev_vn + m_pure_rev_os + m_pending_gr_os, 2)
         
         with mch1:
             st.plotly_chart(create_active_chart("월별 생산 실적", m_months, cdata.get('monthly_prod_p', [0]), cdata.get('monthly_prod_a', [0]), unit="K"), use_container_width=True)
         with mch2:
-            st.plotly_chart(create_active_chart("월별 출하 실적 (TOTAL)", m_months, m_chart_ship_p, cdata.get('monthly_ship_a', [0]), unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("월별 출하 실적 (TOTAL)", m_months, cdata.get('monthly_ship_p', [0]), cdata.get('monthly_ship_a', [0]), unit="K"), use_container_width=True)
         with mch3:
-            st.plotly_chart(create_active_chart("월별 예상 매출 (TOTAL)", m_months, m_chart_rev_p, [m_chart_total_rev], unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("월별 예상 매출 (TOTAL)", m_months, cdata.get('monthly_rev_p', [0.0]), [m_chart_total_rev], unit="억원"), use_container_width=True)
 
     with tab_weekly:
-        w_row1_1, w_row1_2, w_row1_3 = st.columns(3)
-        w_row2_1, w_row2_2, w_row2_3, w_row2_4 = st.columns(4)
+        w_carry_qty = kpi['weekly'].get('carryover_qty', 0)
+        w_carry_rev = kpi['weekly'].get('carryover_rev', 0.0)
         
-        # Weekly VN/KR
-        w_ship_a_vn = kpi['weekly'].get('ship_a_vn', 0)
-        w_pure_rev_vn = kpi['weekly'].get('pure_rev_a_vn', 0.0)
-        w_carry_qty_vn = kpi['weekly'].get('carryover_qty_vn', 0)
-        w_carry_rev_vn = kpi['weekly'].get('carryover_rev_vn', 0.0)
-        w_plan_ship_vn = kpi['weekly'].get('ship_p_vn', 0) + w_carry_qty_vn
-        w_plan_rev_vn = round(kpi['weekly'].get('rev_p_vn', 0.0) + w_carry_rev_vn, 2)
-        
-        w_conf_rev_vn = round(w_pure_rev_vn + w_carry_rev_vn, 2)
-        w_total_rev_vn = w_conf_rev_vn
-        
-        # Weekly OS
-        w_ship_a_os = kpi['weekly'].get('ship_a_os', 0)
-        w_pure_rev_os = kpi['weekly'].get('pure_rev_a_os', 0.0)
-        w_carry_qty_os = kpi['weekly'].get('carryover_qty_os', 0)
-        w_carry_rev_os = kpi['weekly'].get('carryover_rev_os', 0.0)
-        w_pending_gr_os = kpi['weekly'].get('pending_gr_rev_os', kpi['weekly'].get('pending_gr_rev', 0.0))
-        w_plan_ship_os = kpi['weekly'].get('ship_p_os', 0) + w_carry_qty_os
-        w_plan_rev_os = round(kpi['weekly'].get('rev_p_os', 0.0) + w_carry_rev_os, 2)
-        
-        w_conf_rev_os = round(w_pure_rev_os + w_carry_rev_os, 2)
-        w_total_rev_os = round(w_conf_rev_os + w_pending_gr_os, 2)
-
-        with w_row1_1: 
-            render_kpi_card("1. 주간 생산 누계 (Total)", "🏭", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], category="생산")
+        w1, w2 = st.columns([1, 3])
+        with w1: 
+            render_kpi_card("1. 주간 생산 누계", "🏭", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], category="생산")
             render_achievement_gauge("생산", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], unit="K", category="생산")
             
-        with w_row1_2: 
-            ship_sub_vn = f"출하실적 {format_k(w_ship_a_vn)} + 이월 {format_k(w_carry_qty_vn)}"
-            render_kpi_card("2. 주간 출하 (베트남/한국)", "🚚", w_ship_a_vn + w_carry_qty_vn, w_plan_ship_vn, sub_caption=ship_sub_vn, category="출하(VN)")
-            render_achievement_gauge("출하(VN)", w_ship_a_vn + w_carry_qty_vn, w_plan_ship_vn, unit="K", category="출하(VN)")
+            render_html(f"""
+            <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px; padding: 16px; text-align: center; margin-bottom: 24px;">
+                <div style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 8px;">⏳ 전월 이월 (Carryover)</div>
+                <div style="display: flex; justify-content: space-around; align-items: center;">
+                    <div>
+                        <div style="font-size: 10px; color: #94a3b8;">수량</div>
+                        <div style="font-size: 16px; font-weight: 900; color: #0f172a;">{format_k(w_carry_qty)}</div>
+                    </div>
+                    <div style="border-left: 1px solid #e2e8f0; height: 20px;"></div>
+                    <div>
+                        <div style="font-size: 10px; color: #94a3b8;">금액</div>
+                        <div style="font-size: 16px; font-weight: 900; color: #0f172a;">{w_carry_rev:,.2f}억</div>
+                    </div>
+                </div>
+            </div>
+            """)
+        with w2: st.empty()
             
-        with w_row1_3: 
-            ship_sub_os = f"출하실적 {format_k(w_ship_a_os)} + 이월 {format_k(w_carry_qty_os)}"
-            render_kpi_card("3. 주간 출하 (해외)", "✈️", w_ship_a_os + w_carry_qty_os, w_plan_ship_os, sub_caption=ship_sub_os, category="출하(OS)")
-            render_achievement_gauge("출하(OS)", w_ship_a_os + w_carry_qty_os, w_plan_ship_os, unit="K", category="출하(OS)")
+        w_ship_a_vn = kpi['weekly'].get('ship_a_vn', 0)
+        w_plan_ship_vn = kpi['weekly'].get('ship_p_vn', 0)
+        w_ship_a_os = kpi['weekly'].get('ship_a_os', 0)
+        w_plan_ship_os = kpi['weekly'].get('ship_p_os', 0)
+        
+        cw_ship1, cw_ship2, cw_ship3, cw_ship4 = st.columns(4)
+        with cw_ship1: 
+            render_kpi_card("2. 주간 출하 (베트남/한국)", "🚚", w_ship_a_vn, w_plan_ship_vn, category="출하(VN)")
+            render_achievement_gauge("출하(VN)", w_ship_a_vn, w_plan_ship_vn, unit="K", category="출하(VN)")
+        with cw_ship2: 
+            render_kpi_card("3. 주간 출하 (해외)", "✈️", w_ship_a_os, w_plan_ship_os, category="출하(OS)")
+            render_achievement_gauge("출하(OS)", w_ship_a_os, w_plan_ship_os, unit="K", category="출하(OS)")
+        with cw_ship3: st.empty()
+        with cw_ship4: st.empty()
 
-        with w_row2_1:
-            rev_sub_vn = f"출하실적 {w_pure_rev_vn:,.2f}억 + 이월 {w_carry_rev_vn:,.2f}억"
-            render_kpi_card("4. 확정 매출 (베트남/한국)", "💳", w_conf_rev_vn, w_plan_rev_vn, is_rev=True, sub_caption=rev_sub_vn, category="확정매출(VN)")
-            render_achievement_gauge("확정(VN)", w_conf_rev_vn, w_plan_rev_vn, unit="억원", category="확정매출(VN)")
-            
-        with w_row2_2:
-            rev_sub_os = f"출하실적 {w_pure_rev_os:,.2f}억 + 이월 {w_carry_rev_os:,.2f}억"
-            render_kpi_card("5. 확정 매출 (해외)", "💳", w_conf_rev_os, w_plan_rev_os, is_rev=True, sub_caption=rev_sub_os, category="확정매출(OS)")
-            render_achievement_gauge("확정(OS)", w_conf_rev_os, w_plan_rev_os, unit="억원", category="확정매출(OS)")
-            
-        with w_row2_3:
-            rev_total_sub_vn = f"확정 {w_conf_rev_vn:,.2f}억 (해외미입고 해당없음)"
-            render_kpi_card("6. 예상 매출 (베트남/한국)", "💰", w_total_rev_vn, w_plan_rev_vn, is_rev=True, sub_caption=rev_total_sub_vn, category="전체매출(VN)")
+        w_pure_rev_vn = kpi['weekly'].get('pure_rev_a_vn', 0.0)
+        w_plan_rev_vn = kpi['weekly'].get('rev_p_vn', 0.0)
+        w_pure_rev_os = kpi['weekly'].get('pure_rev_a_os', 0.0)
+        w_plan_rev_os = kpi['weekly'].get('rev_p_os', 0.0)
+        
+        cw_rev1, cw_rev2, cw_rev3, cw_rev4 = st.columns(4)
+        with cw_rev1:
+            render_kpi_card("4. 확정 매출 (베트남/한국)", "💳", w_pure_rev_vn, w_plan_rev_vn, is_rev=True, category="확정매출(VN)")
+            render_achievement_gauge("확정(VN)", w_pure_rev_vn, w_plan_rev_vn, unit="억원", category="확정매출(VN)")
+        with cw_rev2:
+            render_kpi_card("5. 확정 매출 (해외)", "💳", w_pure_rev_os, w_plan_rev_os, is_rev=True, category="확정매출(OS)")
+            render_achievement_gauge("확정(OS)", w_pure_rev_os, w_plan_rev_os, unit="억원", category="확정매출(OS)")
+        with cw_rev3: st.empty()
+        with cw_rev4: st.empty()
+
+        w_pending_gr_os = kpi['weekly'].get('pending_gr_rev_os', kpi['weekly'].get('pending_gr_rev', 0.0))
+        w_total_rev_vn = w_pure_rev_vn 
+        w_total_rev_os = round(w_pure_rev_os + w_pending_gr_os, 2)
+        
+        cw_tot1, cw_tot2, cw_tot3, cw_tot4 = st.columns(4)
+        with cw_tot1:
+            render_kpi_card("6. 예상 매출 (베트남/한국)", "💰", w_total_rev_vn, w_plan_rev_vn, is_rev=True, category="전체매출(VN)")
             render_achievement_gauge("예상(VN)", w_total_rev_vn, w_plan_rev_vn, unit="억원", category="전체매출(VN)")
-            
-        with w_row2_4:
-            rev_total_sub_os = f"확정 {w_conf_rev_os:,.2f}억 + 입고전 {w_pending_gr_os:,.2f}억"
-            render_kpi_card("7. 예상 매출 (해외)", "💰", w_total_rev_os, w_plan_rev_os, is_rev=True, sub_caption=rev_total_sub_os, category="전체매출(OS)")
+        with cw_tot2:
+            sub_os = f"확정 {w_pure_rev_os:,.2f}억 + 입고전 {w_pending_gr_os:,.2f}억"
+            render_kpi_card("7. 예상 매출 (해외)", "💰", w_total_rev_os, w_plan_rev_os, is_rev=True, sub_caption=sub_os, category="전체매출(OS)")
             render_achievement_gauge("예상(OS)", w_total_rev_os, w_plan_rev_os, unit="억원", category="전체매출(OS)")
+        with cw_tot3: st.empty()
+        with cw_tot4: st.empty()
 
         wch1, wch2, wch3 = st.columns(3)
         w_weeks = cdata.get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
-        
-        w_total_carry_qty = w_carry_qty_vn + w_carry_qty_os
-        w_total_carry_rev = w_carry_rev_vn + w_carry_rev_os
-        w_chart_ship_p = cdata.get('weekly_ship_p', [0]*len(w_weeks)).copy()
-        w_chart_rev_p = cdata.get('weekly_rev_p', [0.0]*len(w_weeks)).copy()
-        if len(w_chart_ship_p) > 0: w_chart_ship_p[0] += w_total_carry_qty
-        if len(w_chart_rev_p) > 0: w_chart_rev_p[0] = round(w_chart_rev_p[0] + w_total_carry_rev, 2)
 
         with wch1:
             st.plotly_chart(create_active_chart("주차별 생산 실적", w_weeks, cdata.get('weekly_prod_p', [0]*len(w_weeks)), cdata.get('weekly_prod_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
         with wch2:
-            st.plotly_chart(create_active_chart("주차별 출하 실적 (TOTAL)", w_weeks, w_chart_ship_p, cdata.get('weekly_ship_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("주차별 출하 실적 (TOTAL)", w_weeks, cdata.get('weekly_ship_p', [0]*len(w_weeks)), cdata.get('weekly_ship_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
         with wch3:
-            st.plotly_chart(create_active_chart("주차별 예상 매출 (TOTAL)", w_weeks, w_chart_rev_p, cdata.get('weekly_rev_a', [0.0]*len(w_weeks)), unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("주차별 예상 매출 (TOTAL)", w_weeks, cdata.get('weekly_rev_p', [0.0]*len(w_weeks)), cdata.get('weekly_rev_a', [0.0]*len(w_weeks)), unit="억원"), use_container_width=True)
+
+    with tab_daily:
+        d1, d2 = st.columns([1, 3])
+        with d1: 
+            render_kpi_card("1. 당일 생산 누계", "🏭", kpi['daily']['prod_a'], kpi['daily']['prod_p'], category="생산")
+            render_achievement_gauge("생산", kpi['daily']['prod_a'], kpi['daily']['prod_p'], unit="K", category="생산")
+            # 당일 탭에는 이월 물량 표기 생략
+        with d2: st.empty()
+            
+        d_ship_a_vn = kpi['daily'].get('ship_a_vn', 0)
+        d_plan_ship_vn = kpi['daily'].get('ship_p_vn', 0)
+        d_ship_a_os = kpi['daily'].get('ship_a_os', 0)
+        d_plan_ship_os = kpi['daily'].get('ship_p_os', 0)
+        
+        cd_ship1, cd_ship2, cd_ship3, cd_ship4 = st.columns(4)
+        with cd_ship1: 
+            render_kpi_card("2. 당일 출하 (베트남/한국)", "🚚", d_ship_a_vn, d_plan_ship_vn, category="출하(VN)")
+            render_achievement_gauge("출하(VN)", d_ship_a_vn, d_plan_ship_vn, unit="K", category="출하(VN)")
+        with cd_ship2: 
+            render_kpi_card("3. 당일 출하 (해외)", "✈️", d_ship_a_os, d_plan_ship_os, category="출하(OS)")
+            render_achievement_gauge("출하(OS)", d_ship_a_os, d_plan_ship_os, unit="K", category="출하(OS)")
+        with cd_ship3: st.empty()
+        with cd_ship4: st.empty()
+
+        d_pure_rev_vn = kpi['daily'].get('pure_rev_a_vn', 0.0)
+        d_plan_rev_vn = kpi['daily'].get('rev_p_vn', 0.0)
+        d_pure_rev_os = kpi['daily'].get('pure_rev_a_os', 0.0)
+        d_plan_rev_os = kpi['daily'].get('rev_p_os', 0.0)
+        
+        cd_rev1, cd_rev2, cd_rev3, cd_rev4 = st.columns(4)
+        with cd_rev1:
+            render_kpi_card("4. 당일 확정 매출 (VN/KR)", "💳", d_pure_rev_vn, d_plan_rev_vn, is_rev=True, category="확정매출(VN)")
+            render_achievement_gauge("확정(VN)", d_pure_rev_vn, d_plan_rev_vn, unit="억원", category="확정매출(VN)")
+        with cd_rev2:
+            render_kpi_card("5. 당일 확정 매출 (해외)", "💳", d_pure_rev_os, d_plan_rev_os, is_rev=True, category="확정매출(OS)")
+            render_achievement_gauge("확정(OS)", d_pure_rev_os, d_plan_rev_os, unit="억원", category="확정매출(OS)")
+        with cd_rev3: st.empty()
+        with cd_rev4: st.empty()
+
+        d_pending_gr_os = kpi['daily'].get('pending_gr_rev', 0.0)
+        d_total_rev_vn = d_pure_rev_vn 
+        d_total_rev_os = round(d_pure_rev_os + d_pending_gr_os, 2)
+        
+        cd_tot1, cd_tot2, cd_tot3, cd_tot4 = st.columns(4)
+        with cd_tot1:
+            render_kpi_card("6. 당일 예상 매출 (VN/KR)", "💰", d_total_rev_vn, d_plan_rev_vn, is_rev=True, category="전체매출(VN)")
+            render_achievement_gauge("예상(VN)", d_total_rev_vn, d_plan_rev_vn, unit="억원", category="전체매출(VN)")
+        with cd_tot2:
+            sub_os = f"확정 {d_pure_rev_os:,.2f}억 + 입고전 {d_pending_gr_os:,.2f}억"
+            render_kpi_card("7. 당일 예상 매출 (해외)", "💰", d_total_rev_os, d_plan_rev_os, is_rev=True, sub_caption=sub_os, category="전체매출(OS)")
+            render_achievement_gauge("예상(OS)", d_total_rev_os, d_plan_rev_os, unit="억원", category="전체매출(OS)")
+        with cd_tot3: st.empty()
+        with cd_tot4: st.empty()
+
+        ch1, ch2, ch3 = st.columns(3)
+        d_chart_total_rev = round(d_total_rev_vn + d_total_rev_os, 2)
+        with ch1:
+            st.plotly_chart(create_active_chart("생산 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['prod_p']], [kpi['daily']['prod_a']], unit="K"), use_container_width=True)
+        with ch2:
+            st.plotly_chart(create_active_chart("출하 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['ship_p']], [kpi['daily']['ship_a']], unit="K"), use_container_width=True)
+        with ch3:
+            st.plotly_chart(create_active_chart("예상 매출 실적 (TOTAL)", ["TOTAL"], [kpi['daily']['rev_p']], [d_chart_total_rev], unit="억원"), use_container_width=True)
 
     with tab_daily:
         d_row1_1, d_row1_2, d_row1_3 = st.columns(3)
