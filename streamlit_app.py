@@ -1057,7 +1057,7 @@ if menu == "7. 데이터 관리 (Admin)":
                     try:
                         s_plan = parse_rtf_main_plan_excel(ship_plan_file, target_date_input, st.session_state['mapping_data'], ex_rate_input)
                         if s_plan:
-                            # 💡 [핵심] 계획 수량 및 매출에도 이월 데이터를 엎어줍니다 (Apples-to-Apples 비교)
+                            # 💡 [핵심 수정] 계획(Plan) 수량 및 매출에 이월 데이터를 강제 병합하여 정확한 달성률(Apples-to-Apples) 세팅
                             carry_qty = st.session_state['kpi_data']['monthly'].get('carryover_qty', 0)
                             carry_rev = st.session_state['kpi_data']['monthly'].get('carryover_rev', 0.0)
 
@@ -1070,7 +1070,7 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.session_state['kpi_data']['monthly']['ship_p'] = s_plan['cur_month_ship_p'] + carry_qty
                             st.session_state['kpi_data']['monthly']['rev_p'] = round(s_plan['cur_month_rev_p'] + carry_rev, 2)
 
-                            # 주간 차트 계획 업데이트 (이월분 더하기)
+                            # 주간 차트 계획 데이터 업데이트 (이월분 더하기)
                             w_labels = st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
                             w_ship_p, w_rev_p = [], []
                             for idx, w in enumerate(w_labels):
@@ -1085,7 +1085,7 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.session_state['chart_data']['weekly_ship_p'] = w_ship_p
                             st.session_state['chart_data']['weekly_rev_p'] = w_rev_p
 
-                            # 월간 차트 계획 업데이트 (이월분 더하기)
+                            # 월간 차트 계획 데이터 업데이트 (이월분 더하기)
                             m_labels = st.session_state['chart_data'].get('monthly_months', ['11월'])
                             m_ship_p, m_rev_p = [], []
                             for idx, m in enumerate(m_labels):
