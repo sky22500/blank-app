@@ -1106,7 +1106,7 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.success(f"✅ 출하 실적 반영 완료! (이월 수량: {format_k(carry_qty)} / 이월 매출: {carryover:,.2f}억원)")
                     except Exception as e: st.error(f"출하 실적 파싱 오류: {e}")
 
-          if gr_file:
+ if gr_file:
                 with st.spinner("미입고(GR) 데이터를 분석하고 있습니다..."):
                     try:
                         gr_res = parse_pending_gr_excel(gr_file, target_date_input, ex_rate_input)
@@ -1148,37 +1148,6 @@ if menu == "7. 데이터 관리 (Admin)":
                         st.session_state['data_loaded'] = True
                     except Exception as e:
                         st.error(f"미입고(GR) 파싱 오류: {e}")
-            if ship_plan_file:
-                with st.spinner("출하 및 매출 계획(수량 x 단가)을 계산하고 있습니다..."):
-                    try:
-                        s_plan = parse_rtf_main_plan_excel(ship_plan_file, target_date_input, st.session_state['mapping_data'], ex_rate_input)
-                        if s_plan:
-                            st.session_state['kpi_data']['daily']['ship_p'] = s_plan['daily_ship_p']
-                            st.session_state['kpi_data']['daily']['rev_p'] = s_plan['daily_rev_p']
-                            st.session_state['kpi_data']['weekly']['ship_p'] = s_plan['cur_week_ship_p']
-                            st.session_state['kpi_data']['weekly']['rev_p'] = s_plan['cur_week_rev_p']
-                            st.session_state['kpi_data']['monthly']['ship_p'] = s_plan['cur_month_ship_p']
-                            st.session_state['kpi_data']['monthly']['rev_p'] = s_plan['cur_month_rev_p']
-
-                            w_labels = st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
-                            st.session_state['chart_data']['weekly_ship_p'] = [s_plan['weekly_ship_plan'].get(w, 0) for w in w_labels]
-                            st.session_state['chart_data']['weekly_rev_p'] = [s_plan['weekly_rev_plan'].get(w, 0.0) for w in w_labels]
-
-                            m_labels = st.session_state['chart_data'].get('monthly_months', ['11월'])
-                            st.session_state['chart_data']['monthly_ship_p'] = [s_plan['monthly_ship_plan'].get(m, 0) for m in m_labels]
-                            st.session_state['chart_data']['monthly_rev_p'] = [s_plan['monthly_rev_plan'].get(m, 0.0) for m in m_labels]
-
-                            st.session_state['_ship_plan_by_model'] = s_plan['plan_by_model']
-                            st.session_state['_ship_plan_by_site'] = s_plan['plan_by_site']
-                            
-                            st.session_state['fcst_data'] = {
-                                'rows': s_plan.get('fcst_rows', []),
-                                'date_cols': s_plan.get('fcst_date_cols', [])
-                            }
-
-                            st.session_state['data_loaded'] = True
-                            st.success(f"✅ 출하 & 매출 계획 반영 완료! (Daily 계획: {format_k(s_plan['daily_ship_p'])} / {s_plan['daily_rev_p']:,.2f}억원)")
-                    except Exception as e: st.error(f"출하 계획 파싱 오류: {e}")
 
             p_models = st.session_state.get('_ship_plan_by_model', {})
             a_models = st.session_state.get('_ship_actual_by_model', {})
