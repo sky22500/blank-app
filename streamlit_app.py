@@ -1106,27 +1106,27 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.success(f"✅ 출하 실적 반영 완료! (이월 수량: {format_k(carry_qty)} / 이월 매출: {carryover:,.2f}억원)")
                     except Exception as e: st.error(f"출하 실적 파싱 오류: {e}")
 
-            if gr_file:
+          if gr_file:
                 with st.spinner("미입고(GR) 데이터를 분석하고 있습니다..."):
                     try:
                         gr_res = parse_pending_gr_excel(gr_file, target_date_input, ex_rate_input)
                         pending_siel = gr_res.get('siel', 0.0)
                         pending_other = gr_res.get('other', 0.0)
                         
-                        t_m, t_d = parse_target_day_info(target_date_input)
-                        siel_daily_rev = 0.0
-                        
+                        # [수정된 부분] 특정 당일이 아닌, 출하실적 전체(모든 날짜)를 스캔하여 SIEL 금액 합산
+                        total_siel_actual_rev = 0.0
                         if 'actual_by_day' in st.session_state:
-                            act_day = st.session_state['actual_by_day'].get(t_d, {})
-                            for item in act_day.get('items', []):
-                                if 'SIEL' in str(item.get('site', '')).upper():
-                                    siel_daily_rev += item.get('rev_ok', 0.0)
+                            for day_key, act_day in st.session_state['actual_by_day'].items():
+                                for item in act_day.get('items', []):
+                                    if 'SIEL' in str(item.get('site', '')).upper():
+                                        total_siel_actual_rev += item.get('rev_ok', 0.0)
                         
                         final_pending_rev = pending_other
                         if pending_siel > 0:
-                            deducted_siel = max(0.0, pending_siel - siel_daily_rev)
+                            # 오차 무관하게 무조건 출하실적 전체 SIEL 금액을 GR 미입고액에서 차감
+                            deducted_siel = max(0.0, pending_siel - total_siel_actual_rev)
                             if deducted_siel < pending_siel:
-                                st.warning(f"💡 [중복 제외] GR 파일 내 SIEL 미입고액({pending_siel:,.2f}억) 중 당일 출하실적에 기반영된 금액({siel_daily_rev:,.2f}억)을 제외하여 합산합니다.")
+                                st.warning(f"💡 [중복 제외] GR 파일 내 SIEL 미입고액({pending_siel:,.2f}억) 중 출하실적에 기 등록된 전체 금액({total_siel_actual_rev:,.2f}억)을 제외하여 합산합니다.")
                             final_pending_rev += deducted_siel
                         
                         pending_rev = round(final_pending_rev, 2)
@@ -1148,7 +1148,6 @@ if menu == "7. 데이터 관리 (Admin)":
                         st.session_state['data_loaded'] = True
                     except Exception as e:
                         st.error(f"미입고(GR) 파싱 오류: {e}")
-
             if ship_plan_file:
                 with st.spinner("출하 및 매출 계획(수량 x 단가)을 계산하고 있습니다..."):
                     try:
