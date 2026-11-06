@@ -1365,7 +1365,7 @@ elif menu == "🏠 현황":
     cdata = st.session_state.get('chart_data', default_charts)
     cur_target_date = st.session_state.get('target_date', default_target_date)
 
-    # 💡 상단 헤더: 전체 누계 매출 (월간 기준 총합: 확정 + 미입고)
+    # 💡 상단 헤더: 전체 누계 매출 (월간 기준 총합: 베트남/한국 + 해외)
     m_pure = kpi['monthly'].get('pure_rev_a', 0.0)
     m_carry = kpi['monthly'].get('carryover_rev', 0.0)
     m_pending = kpi['monthly'].get('pending_gr_rev_os', kpi['monthly'].get('pending_gr_rev', 0.0))
