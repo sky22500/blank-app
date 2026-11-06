@@ -1098,6 +1098,23 @@ if menu == "7. 데이터 관리 (Admin)":
                     try:
                         pending_rev = parse_pending_gr_excel(gr_file, target_date_input, ex_rate_input)
                         
+                        # [신규 추가] 중복 합산 방지: SIEL 당일 출하 실적 vs GR 미입고 금액 대조
+                        t_m, t_d = parse_target_day_info(target_date_input)
+                        siel_daily_rev = 0.0
+                        
+                        if 'actual_by_day' in st.session_state:
+                            act_day = st.session_state['actual_by_day'].get(t_d, {})
+                            for item in act_day.get('items', []):
+                                if 'SIEL' in str(item.get('site', '')).upper():
+                                    siel_daily_rev += item.get('rev_ok', 0.0)
+                        
+                        # 0.1 억원 (1천만원) 이내 오차면 100% 일치로 간주 (환율 오차 감안)
+                        if pending_rev > 0 and abs(pending_rev - siel_daily_rev) < 0.1:
+                            st.warning(f"💡 [중복 제외] GR 미입고 금액({pending_rev:,.2f}억)이 당일 SIEL 출하실적({siel_daily_rev:,.2f}억)과 완벽히 일치합니다. 확정 매출에 이미 반영되었으므로 예상 매출에서는 0원으로 처리합니다.")
+                            pending_rev = 0.0
+                        else:
+                            st.success(f"✅ 미입고(GR) 해외 법인 실적 반영 완료! (입고전 금액: {pending_rev:,.2f}억원)")
+                        
                         pure_m = st.session_state['kpi_data']['monthly'].get('pure_rev_a', 0.0)
                         carry_m = st.session_state['kpi_data']['monthly'].get('carryover_rev', 0.0)
                         st.session_state['kpi_data']['monthly']['pending_gr_rev'] = pending_rev
@@ -1112,7 +1129,6 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.session_state['chart_data']['weekly_rev_a'][0] = round(pure_w + carry_w + pending_rev, 2)
 
                         st.session_state['data_loaded'] = True
-                        st.success(f"✅ 미입고(GR) 해외 법인 실적 반영 완료! (입고전 금액: {pending_rev:,.2f}억원)")
                     except Exception as e:
                         st.error(f"미입고(GR) 파싱 오류: {e}")
 
