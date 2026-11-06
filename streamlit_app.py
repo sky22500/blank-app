@@ -167,6 +167,7 @@ if not st.session_state.get('data_loaded'):
     if saved_state:
         for k, v in saved_state.items():
             st.session_state[k] = v
+            # JSON 파싱 시 일자(key) 문자열을 정수형으로 강제 변환하여 캘린더 매칭 오류 방지
             if k == "actual_by_day" and isinstance(v, dict):
                 st.session_state["actual_by_day"] = {int(day): data for day, data in v.items()}
 
@@ -851,7 +852,6 @@ def parse_rtf_main_plan_excel(file_bytes, target_date_str, mapping_data, exchang
         'fcst_rows': fcst_rows, 'fcst_date_cols': fcst_date_cols
     }
 
-# [수정] 3-5. 미입고(GR) 인보이스 내역 파싱 엔진
 def parse_pending_gr_excel(file_bytes, target_date_str, exchange_rate=1350.0):
     try:
         df = pd.read_excel(file_bytes)
@@ -1052,65 +1052,61 @@ if menu == "7. 데이터 관리 (Admin)":
                         st.success(f"✅ 생산 데이터 반영 완료! (Daily 실적: {format_k(p['daily_prod_actual'])})")
                     except Exception as e: st.error(f"생산 파싱 오류: {e}")
             
-            if ship_plan_file:
-                with st.spinner("출하 및 매출 계획(수량 x 단가)을 계산하고 있습니다..."):
+            if ship_actual_file:
+                with st.spinner("출하 실적 및 F열 전월 이월 매출을 분석하고 있습니다..."):
                     try:
-                        s_plan = parse_rtf_main_plan_excel(ship_plan_file, target_date_input, st.session_state['mapping_data'], ex_rate_input)
-                        if s_plan:
-                            # 💡 [핵심 수정] 계획(Plan) 수량 및 매출에 이월 데이터를 강제 병합하여 정확한 달성률(Apples-to-Apples) 세팅
-                            carry_qty = st.session_state['kpi_data']['monthly'].get('carryover_qty', 0)
-                            carry_rev = st.session_state['kpi_data']['monthly'].get('carryover_rev', 0.0)
-
-                            st.session_state['kpi_data']['daily']['ship_p'] = s_plan['daily_ship_p'] + carry_qty
-                            st.session_state['kpi_data']['daily']['rev_p'] = round(s_plan['daily_rev_p'] + carry_rev, 2)
+                        s_act = parse_new_shipment_actual_excel(ship_actual_file, target_date_input, st.session_state['mapping_data'])
+                        if s_act:
+                            carryover = s_act['carryover_rev_ok']
+                            carry_qty = s_act.get('carryover_qty_ok', 0)
+                            pending_gr = st.session_state['kpi_data']['monthly'].get('pending_gr_rev', 0.0)
                             
-                            st.session_state['kpi_data']['weekly']['ship_p'] = s_plan['cur_week_ship_p'] + carry_qty
-                            st.session_state['kpi_data']['weekly']['rev_p'] = round(s_plan['cur_week_rev_p'] + carry_rev, 2)
+                            st.session_state['kpi_data']['daily']['ship_a'] = s_act['daily_ship_a'] + carry_qty
+                            st.session_state['kpi_data']['daily']['pure_rev_a'] = s_act['daily_rev_a']
+                            st.session_state['kpi_data']['daily']['rev_a'] = s_act['daily_rev_a']
+                            st.session_state['actual_by_day'] = s_act['day_actual_totals']
                             
-                            st.session_state['kpi_data']['monthly']['ship_p'] = s_plan['cur_month_ship_p'] + carry_qty
-                            st.session_state['kpi_data']['monthly']['rev_p'] = round(s_plan['cur_month_rev_p'] + carry_rev, 2)
-
-                            # 주간 차트 계획 데이터 업데이트 (이월분 더하기)
                             w_labels = st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
-                            w_ship_p, w_rev_p = [], []
+                            w_ship_a = []
                             for idx, w in enumerate(w_labels):
-                                q = s_plan['weekly_ship_plan'].get(w, 0)
-                                r = s_plan['weekly_rev_plan'].get(w, 0.0)
-                                if idx == 0:
-                                    w_ship_p.append(q + carry_qty)
-                                    w_rev_p.append(round(r + carry_rev, 2))
-                                else:
-                                    w_ship_p.append(q)
-                                    w_rev_p.append(round(r, 2))
-                            st.session_state['chart_data']['weekly_ship_p'] = w_ship_p
-                            st.session_state['chart_data']['weekly_rev_p'] = w_rev_p
-
-                            # 월간 차트 계획 데이터 업데이트 (이월분 더하기)
-                            m_labels = st.session_state['chart_data'].get('monthly_months', ['11월'])
-                            m_ship_p, m_rev_p = [], []
-                            for idx, m in enumerate(m_labels):
-                                q = s_plan['monthly_ship_plan'].get(m, 0)
-                                r = s_plan['monthly_rev_plan'].get(m, 0.0)
-                                if idx == 0:
-                                    m_ship_p.append(q + carry_qty)
-                                    m_rev_p.append(round(r + carry_rev, 2))
-                                else:
-                                    m_ship_p.append(q)
-                                    m_rev_p.append(round(r, 2))
-                            st.session_state['chart_data']['monthly_ship_p'] = m_ship_p
-                            st.session_state['chart_data']['monthly_rev_p'] = m_rev_p
-
-                            st.session_state['_ship_plan_by_model'] = s_plan['plan_by_model']
-                            st.session_state['_ship_plan_by_site'] = s_plan['plan_by_site']
+                                pure_q = s_act['weekly_ship_actual'].get(w, 0)
+                                if idx == 0: w_ship_a.append(pure_q + carry_qty)
+                                else: w_ship_a.append(pure_q)
                             
-                            st.session_state['fcst_data'] = {
-                                'rows': s_plan.get('fcst_rows', []),
-                                'date_cols': s_plan.get('fcst_date_cols', [])
-                            }
-
+                            w_rev_a = []
+                            for idx, w in enumerate(w_labels):
+                                pure_w = s_act['weekly_rev_actual'].get(w, 0.0)
+                                if idx == 0:
+                                    w_rev_a.append(round(pure_w + carryover + pending_gr, 2))
+                                else:
+                                    w_rev_a.append(round(pure_w, 2))
+                                    
+                            pure_weekly_rev = sum(s_act['weekly_rev_actual'].values())
+                            st.session_state['chart_data']['weekly_ship_a'] = w_ship_a
+                            st.session_state['chart_data']['weekly_rev_a'] = w_rev_a
+                            st.session_state['kpi_data']['weekly']['ship_a'] = sum(w_ship_a)
+                            st.session_state['kpi_data']['weekly']['pure_rev_a'] = round(pure_weekly_rev, 2)
+                            st.session_state['kpi_data']['weekly']['carryover_rev'] = carryover
+                            st.session_state['kpi_data']['weekly']['carryover_qty'] = carry_qty
+                            st.session_state['kpi_data']['weekly']['rev_a'] = round(pure_weekly_rev + carryover + pending_gr, 2)
+                            
+                            pure_monthly_rev = s_act['monthly_rev_actual']
+                            st.session_state['kpi_data']['monthly']['ship_a'] = s_act['monthly_ship_actual'] + carry_qty
+                            st.session_state['kpi_data']['monthly']['pure_rev_a'] = pure_monthly_rev
+                            st.session_state['kpi_data']['monthly']['carryover_rev'] = carryover
+                            st.session_state['kpi_data']['monthly']['carryover_qty'] = carry_qty
+                            st.session_state['kpi_data']['monthly']['rev_a'] = round(pure_monthly_rev + carryover + pending_gr, 2)
+                            st.session_state['chart_data']['monthly_ship_a'] = [s_act['monthly_ship_actual'] + carry_qty]
+                            st.session_state['chart_data']['monthly_rev_a'] = [round(pure_monthly_rev + carryover + pending_gr, 2)]
+                            
+                            st.session_state['_ship_actual_by_model'] = s_act['actual_by_model']
+                            st.session_state['_ship_actual_by_site'] = s_act['actual_by_site']
+                            
                             st.session_state['data_loaded'] = True
-                            st.success(f"✅ 출하 & 매출 계획 반영 완료! (이월 {format_k(carry_qty)}개 / {carry_rev:,.2f}억원 계획 합산됨)")
-                    except Exception as e: st.error(f"출하 계획 파싱 오류: {e}")
+                            st.success(f"✅ 출하 실적 반영 완료! (이월 수량: {format_k(carry_qty)} / 이월 매출: {carryover:,.2f}억원)")
+                    except Exception as e:
+                        st.error(f"출하 실적 파싱 오류: {e}")
+
             if gr_file:
                 with st.spinner("미입고(GR) 데이터를 분석하고 있습니다..."):
                     try:
@@ -1153,6 +1149,33 @@ if menu == "7. 데이터 관리 (Admin)":
                         st.session_state['data_loaded'] = True
                     except Exception as e:
                         st.error(f"미입고(GR) 파싱 오류: {e}")
+
+            if ship_plan_file:
+                with st.spinner("출하 및 매출 계획(수량 x 단가)을 계산하고 있습니다..."):
+                    try:
+                        s_plan = parse_rtf_main_plan_excel(ship_plan_file, target_date_input, st.session_state['mapping_data'], ex_rate_input)
+                        if s_plan:
+                            # 💡 계획 데이터는 원본(순수 계획) 상태 그대로 DB에 저장합니다.
+                            # (이월 데이터는 화면 렌더링 시점에만 동적으로 합산하도록 구조 변경)
+                            st.session_state['kpi_data']['daily']['ship_p'] = s_plan['daily_ship_p']
+                            st.session_state['kpi_data']['daily']['rev_p'] = s_plan['daily_rev_p']
+                            st.session_state['kpi_data']['weekly']['ship_p'] = s_plan['cur_week_ship_p']
+                            st.session_state['kpi_data']['weekly']['rev_p'] = s_plan['cur_week_rev_p']
+                            st.session_state['kpi_data']['monthly']['ship_p'] = s_plan['cur_month_ship_p']
+                            st.session_state['kpi_data']['monthly']['rev_p'] = s_plan['cur_month_rev_p']
+
+                            st.session_state['chart_data']['weekly_ship_p'] = [s_plan['weekly_ship_plan'].get(w, 0) for w in st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])]
+                            st.session_state['chart_data']['weekly_rev_p'] = [s_plan['weekly_rev_plan'].get(w, 0.0) for w in st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])]
+                            st.session_state['chart_data']['monthly_ship_p'] = [s_plan['monthly_ship_plan'].get(m, 0) for m in st.session_state['chart_data'].get('monthly_months', ['11월'])]
+                            st.session_state['chart_data']['monthly_rev_p'] = [s_plan['monthly_rev_plan'].get(m, 0.0) for m in st.session_state['chart_data'].get('monthly_months', ['11월'])]
+
+                            st.session_state['_ship_plan_by_model'] = s_plan['plan_by_model']
+                            st.session_state['_ship_plan_by_site'] = s_plan['plan_by_site']
+                            st.session_state['fcst_data'] = {'rows': s_plan.get('fcst_rows', []), 'date_cols': s_plan.get('fcst_date_cols', [])}
+
+                            st.session_state['data_loaded'] = True
+                            st.success(f"✅ 출하 & 매출 계획 반영 완료! (순수 월간 계획: {format_k(s_plan['cur_month_ship_p'])} / {s_plan['cur_month_rev_p']:,.2f}억원)")
+                    except Exception as e: st.error(f"출하 계획 파싱 오류: {e}")
 
             p_models = st.session_state.get('_ship_plan_by_model', {})
             a_models = st.session_state.get('_ship_actual_by_model', {})
@@ -1367,70 +1390,92 @@ elif menu == "🏠 현황":
         
         m_pure = kpi['monthly'].get('pure_rev_a', 0.0)
         m_carry = kpi['monthly'].get('carryover_rev', 0.0)
+        m_carry_qty = kpi['monthly'].get('carryover_qty', 0)
         m_pending = kpi['monthly'].get('pending_gr_rev', 0.0)
         
         m_confirmed_rev = round(m_pure + m_carry, 2)
         m_total_rev = round(m_confirmed_rev + m_pending, 2)
         
+        # 💡 [핵심] 화면 렌더링 시점에 계획(Plan)에 이월분을 실시간으로 합산합니다.
+        m_plan_ship = kpi['monthly']['ship_p'] + m_carry_qty
+        m_plan_rev = round(kpi['monthly']['rev_p'] + m_carry, 2)
+        
         with m1: 
             render_kpi_card("월간 생산 누계", "🏭", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], category="생산")
             render_achievement_gauge("생산", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], unit="K", category="생산")
         with m2: 
-            ship_sub = f"출하실적 {format_k(kpi['monthly']['ship_a'] - kpi['monthly'].get('carryover_qty', 0))} + 이월 {format_k(kpi['monthly'].get('carryover_qty', 0))}"
-            render_kpi_card("월간 출하 누계", "🚚", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], sub_caption=ship_sub, category="출하")
-            render_achievement_gauge("출하", kpi['monthly']['ship_a'], kpi['monthly']['ship_p'], unit="K", category="출하")
+            ship_sub = f"출하실적 {format_k(kpi['monthly']['ship_a'] - m_carry_qty)} + 이월 {format_k(m_carry_qty)}"
+            render_kpi_card("월간 출하 누계", "🚚", kpi['monthly']['ship_a'], m_plan_ship, sub_caption=ship_sub, category="출하")
+            render_achievement_gauge("출하", kpi['monthly']['ship_a'], m_plan_ship, unit="K", category="출하")
         with m3: 
             rev_sub = f"당월 출하실적 {m_pure:,.2f}억 + 이월 {m_carry:,.2f}억"
-            render_kpi_card("확정 매출액", "💳", m_confirmed_rev, kpi['monthly']['rev_p'], is_rev=True, sub_caption=rev_sub, category="확정매출")
-            render_achievement_gauge("확정매출", m_confirmed_rev, kpi['monthly']['rev_p'], unit="억원", category="확정매출")
+            render_kpi_card("확정 매출액", "💳", m_confirmed_rev, m_plan_rev, is_rev=True, sub_caption=rev_sub, category="확정매출")
+            render_achievement_gauge("확정매출", m_confirmed_rev, m_plan_rev, unit="억원", category="확정매출")
         with m4:
             rev_total_sub = f"확정 {m_confirmed_rev:,.2f}억 + 입고전(해외) {m_pending:,.2f}억"
-            render_kpi_card("예상 매출액 (TOTAL)", "💰", m_total_rev, kpi['monthly']['rev_p'], is_rev=True, sub_caption=rev_total_sub, category="전체매출")
-            render_achievement_gauge("예상매출", m_total_rev, kpi['monthly']['rev_p'], unit="억원", category="전체매출")
+            render_kpi_card("예상 매출액 (TOTAL)", "💰", m_total_rev, m_plan_rev, is_rev=True, sub_caption=rev_total_sub, category="전체매출")
+            render_achievement_gauge("예상매출", m_total_rev, m_plan_rev, unit="억원", category="전체매출")
 
         mch1, mch2, mch3 = st.columns(3)
         m_months = cdata.get('monthly_months', ['11월'])
+        
+        # 💡 차트 계획에도 이월분 동적 합산
+        m_chart_ship_p = [val + m_carry_qty for val in cdata.get('monthly_ship_p', [0])]
+        m_chart_rev_p = [round(val + m_carry, 2) for val in cdata.get('monthly_rev_p', [0.0])]
+        
         with mch1:
             st.plotly_chart(create_active_chart("월별 생산 실적", m_months, cdata.get('monthly_prod_p', [0]), cdata.get('monthly_prod_a', [0]), unit="K"), use_container_width=True)
         with mch2:
-            st.plotly_chart(create_active_chart("월별 출하 실적", m_months, cdata.get('monthly_ship_p', [0]), cdata.get('monthly_ship_a', [0]), unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("월별 출하 실적", m_months, m_chart_ship_p, cdata.get('monthly_ship_a', [0]), unit="K"), use_container_width=True)
         with mch3:
-            st.plotly_chart(create_active_chart("월별 매출 실적", m_months, cdata.get('monthly_rev_p', [0.0]), [m_total_rev], unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("월별 매출 실적", m_months, m_chart_rev_p, [m_total_rev], unit="억원"), use_container_width=True)
 
     with tab_weekly:
         wk1, wk2, wk3, wk4 = st.columns(4)
         
         w_pure = kpi['weekly'].get('pure_rev_a', 0.0)
         w_carry = kpi['weekly'].get('carryover_rev', 0.0)
+        w_carry_qty = kpi['weekly'].get('carryover_qty', 0)
         w_pending = kpi['weekly'].get('pending_gr_rev', 0.0)
         
         w_confirmed_rev = round(w_pure + w_carry, 2)
         w_total_rev = round(w_confirmed_rev + w_pending, 2)
         
+        # 💡 주간 계획에도 이월분 동적 합산
+        w_plan_ship = kpi['weekly']['ship_p'] + w_carry_qty
+        w_plan_rev = round(kpi['weekly']['rev_p'] + w_carry, 2)
+        
         with wk1: 
             render_kpi_card("주간 생산 누계", "🏭", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], category="생산")
             render_achievement_gauge("생산", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], unit="K", category="생산")
         with wk2: 
-            ship_sub = f"출하실적 {format_k(kpi['weekly']['ship_a'] - kpi['weekly'].get('carryover_qty', 0))} + 이월 {format_k(kpi['weekly'].get('carryover_qty', 0))}"
-            render_kpi_card("주간 출하 누계", "🚚", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], sub_caption=ship_sub, category="출하")
-            render_achievement_gauge("출하", kpi['weekly']['ship_a'], kpi['weekly']['ship_p'], unit="K", category="출하")
+            ship_sub = f"출하실적 {format_k(kpi['weekly']['ship_a'] - w_carry_qty)} + 이월 {format_k(w_carry_qty)}"
+            render_kpi_card("주간 출하 누계", "🚚", kpi['weekly']['ship_a'], w_plan_ship, sub_caption=ship_sub, category="출하")
+            render_achievement_gauge("출하", kpi['weekly']['ship_a'], w_plan_ship, unit="K", category="출하")
         with wk3: 
             rev_sub = f"주간 출하실적 {w_pure:,.2f}억 + 이월 {w_carry:,.2f}억"
-            render_kpi_card("확정 매출액", "💳", w_confirmed_rev, kpi['weekly']['rev_p'], is_rev=True, sub_caption=rev_sub, category="확정매출")
-            render_achievement_gauge("확정매출", w_confirmed_rev, kpi['weekly']['rev_p'], unit="억원", category="확정매출")
+            render_kpi_card("확정 매출액", "💳", w_confirmed_rev, w_plan_rev, is_rev=True, sub_caption=rev_sub, category="확정매출")
+            render_achievement_gauge("확정매출", w_confirmed_rev, w_plan_rev, unit="억원", category="확정매출")
         with wk4:
             rev_total_sub = f"확정 {w_confirmed_rev:,.2f}억 + 입고전(해외) {w_pending:,.2f}억"
-            render_kpi_card("예상 매출액 (TOTAL)", "💰", w_total_rev, kpi['weekly']['rev_p'], is_rev=True, sub_caption=rev_total_sub, category="전체매출")
-            render_achievement_gauge("예상매출", w_total_rev, kpi['weekly']['rev_p'], unit="억원", category="전체매출")
+            render_kpi_card("예상 매출액 (TOTAL)", "💰", w_total_rev, w_plan_rev, is_rev=True, sub_caption=rev_total_sub, category="전체매출")
+            render_achievement_gauge("예상매출", w_total_rev, w_plan_rev, unit="억원", category="전체매출")
 
         wch1, wch2, wch3 = st.columns(3)
         w_weeks = cdata.get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
+        
+        # 주간 차트 첫 번째 주에만 이월 합산
+        w_chart_ship_p = cdata.get('weekly_ship_p', [0]*len(w_weeks)).copy()
+        w_chart_rev_p = cdata.get('weekly_rev_p', [0.0]*len(w_weeks)).copy()
+        if len(w_chart_ship_p) > 0: w_chart_ship_p[0] += w_carry_qty
+        if len(w_chart_rev_p) > 0: w_chart_rev_p[0] = round(w_chart_rev_p[0] + w_carry, 2)
+
         with wch1:
             st.plotly_chart(create_active_chart("주차별 생산 실적", w_weeks, cdata.get('weekly_prod_p', [0]*len(w_weeks)), cdata.get('weekly_prod_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
         with wch2:
-            st.plotly_chart(create_active_chart("주차별 출하 실적", w_weeks, cdata.get('weekly_ship_p', [0]*len(w_weeks)), cdata.get('weekly_ship_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
+            st.plotly_chart(create_active_chart("주차별 출하 실적", w_weeks, w_chart_ship_p, cdata.get('weekly_ship_a', [0]*len(w_weeks)), unit="K"), use_container_width=True)
         with wch3:
-            st.plotly_chart(create_active_chart("주차별 매출 실적", w_weeks, cdata.get('weekly_rev_p', [0.0]*len(w_weeks)), cdata.get('weekly_rev_a', [0.0]*len(w_weeks)), unit="억원"), use_container_width=True)
+            st.plotly_chart(create_active_chart("주차별 매출 실적", w_weeks, w_chart_rev_p, cdata.get('weekly_rev_a', [0.0]*len(w_weeks)), unit="억원"), use_container_width=True)
 
     with tab_daily:
         k1, k2, k3, k4 = st.columns(4)
@@ -1707,6 +1752,26 @@ elif menu == "6. 캘린더":
                     day_supply_map[d]['total_rev'] += rev_val
                     day_supply_map[d]['items'].append({
                         'model': m_name, 'gh_code': gh, 'site': site, 'qty': q, 'price': price, 'rev_ok': rev_val
+                    })
+                    
+        # [핵심 로직] 과거 엑셀 데이터 누락 방지 (RTF 특성상 지난 날짜는 0이 되는 문제 해결)
+        # 계획(Plan)이 0인데 실적(Actual)이 존재하는 날짜는 실적을 계획으로 덮어씌워 초기값을 살림
+        for d in range(1, num_days + 1):
+            a_data = actual_by_day.get(d, {'qty': 0, 'rev': 0.0, 'items': []})
+            a_q = a_data.get('qty', 0)
+            a_r = a_data.get('rev', 0.0)
+            
+            if day_supply_map[d]['total'] == 0 and a_q > 0:
+                day_supply_map[d]['total'] = a_q
+                day_supply_map[d]['total_rev'] = a_r
+                for a_item in a_data.get('items', []):
+                    day_supply_map[d]['items'].append({
+                        'model': a_item.get('model', ''),
+                        'gh_code': a_item.get('gh_code', ''),
+                        'site': a_item.get('site', ''),
+                        'qty': a_item.get('qty', 0),
+                        'price': a_item.get('price', 0.0),
+                        'rev_ok': a_item.get('rev_ok', 0.0)
                     })
 
         for d in range(1, num_days + 1):
