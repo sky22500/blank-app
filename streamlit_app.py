@@ -1143,7 +1143,7 @@ def create_active_chart(title, categories, plan_data, actual_data, name1="계획
     return fig
 
 # 6. 메인 분기 로직
-elif menu == "7. 데이터 관리 (Admin)":
+  if menu == "7. 데이터 관리 (Admin)":
     st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>⚙️ DATA MANAGEMENT</h1>", unsafe_allow_html=True)
     
     admin_pwd = st.text_input("비밀번호", type="password")
