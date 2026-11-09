@@ -1341,6 +1341,8 @@ if menu == "7. 데이터 관리 (Admin)":
                                 md[d]['os_r'] += it.get('rev_ok', 0.0)
             st.session_state['manual_daily_data'] = md
             
+        # 💡 [핵심 수정] 구글 시트(JSON) 통신 과정에서 문자열로 바뀐 Key를 다시 숫자로 강제 변환
+        st.session_state['manual_daily_data'] = {int(k): v for k, v in st.session_state['manual_daily_data'].items()}
         md = st.session_state['manual_daily_data']
         
         # 2. Calendar UI
