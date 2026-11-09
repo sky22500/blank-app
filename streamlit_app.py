@@ -1027,12 +1027,11 @@ def parse_pending_gr_excel(file_bytes, target_date_str, exchange_rate=1350.0):
                     try:
                         amt_val = float(amt)
                         pending_other_krw += amt_val * exchange_rate
-                        # GR 파일 특성상 주로 해외 거점이므로, SIEL 중복 제외를 위해 other 쪽에 쌓고 Admin 단에서 처리
                     except:
                         pass
 
         return {
-            'siel': round(pending_siel_krw / 100_000_000.0, 2), # Legacy
+            'siel': round(pending_siel_krw / 100_000_000.0, 2), 
             'other': round(pending_other_krw / 100_000_000.0, 2),
             'total': round((pending_siel_krw + pending_other_krw) / 100_000_000.0, 2)
         }
@@ -1143,12 +1142,11 @@ def create_active_chart(title, categories, plan_data, actual_data, name1="계획
     return fig
 
 # 6. 메인 분기 로직
-  if menu == "7. 데이터 관리 (Admin)":
+if menu == "7. 데이터 관리 (Admin)":
     st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>⚙️ DATA MANAGEMENT</h1>", unsafe_allow_html=True)
     
     admin_pwd = st.text_input("비밀번호", type="password")
     
-    # ------------------ 기존 파일 업로드 기능 (2250) ------------------
     if admin_pwd == "2250":
         c_set1, c_set2 = st.columns(2)
         with c_set1: target_date_input = st.text_input("📅 조회 기준 날짜 지정 (예: 11/2)", default_target_date)
@@ -1244,7 +1242,6 @@ def create_active_chart(title, categories, plan_data, actual_data, name1="계획
                             st.session_state['chart_data']['monthly_ship_a'] = [s_act['monthly_ship_actual'] + carry_qty]
                             st.session_state['chart_data']['monthly_rev_a'] = [round(pure_monthly_rev + carryover + pending_gr, 2)]
                             
-                            # VN vs OS Splits (간소화)
                             st.session_state['kpi_data']['monthly']['ship_a_vn'] = s_act['monthly_ship_a_vn']
                             st.session_state['kpi_data']['monthly']['pure_rev_a_vn'] = s_act['monthly_rev_a_vn']
                             st.session_state['kpi_data']['monthly']['ship_a_os'] = s_act['monthly_ship_a_os']
@@ -1319,12 +1316,10 @@ def create_active_chart(title, categories, plan_data, actual_data, name1="계획
                 if is_saved:
                     st.success("🎉 구글 시트 저장 완료! 이제 모든 사용자의 화면에 최신 실적이 표시됩니다.")
 
-    # ------------------ 신규 강제 실적 수정 기능 (7777) ------------------
     elif admin_pwd == "7777":
         st.markdown("### 🛠️ 수동 KPI 오버라이드 (강제 수정 모드)")
         st.warning("⚠️ 이곳에서 수정한 수치는 Main 현황판의 **월간 총 출하 실적**과 **순수 매출 실적**에 즉시 덮어씌워집니다. (기존 이월/미입고 금액은 유지된 채로 합산됩니다.)")
         
-        # 현재 세션에 저장된 월간 실적 불러오기
         curr_ship = st.session_state['kpi_data']['monthly'].get('ship_a', 0)
         curr_rev = st.session_state['kpi_data']['monthly'].get('pure_rev_a', 0.0)
         
@@ -1332,11 +1327,9 @@ def create_active_chart(title, categories, plan_data, actual_data, name1="계획
         new_rev = st.number_input("당월 총 순수 매출 실적 (단위: 억원)", value=float(curr_rev), step=1.0)
         
         if st.button("💾 수동 실적 저장 및 구글시트 연동", type="primary"):
-            # 세션 상태 강제 업데이트
             st.session_state['kpi_data']['monthly']['ship_a'] = new_ship
             st.session_state['kpi_data']['monthly']['pure_rev_a'] = new_rev
             
-            # 연관된 총합(Total) 데이터 업데이트
             carry_rev = st.session_state['kpi_data']['monthly'].get('carryover_rev', 0.0)
             pending_gr = st.session_state['kpi_data']['monthly'].get('pending_gr_rev', 0.0)
             
@@ -1357,109 +1350,11 @@ def create_active_chart(title, categories, plan_data, actual_data, name1="계획
                 if is_saved:
                     st.success("🎉 강제 업데이트 완료! Main 현황판에 변경하신 수동 실적이 반영되었습니다.")
 
-            if gr_file:
-                with st.spinner("미입고(GR) 데이터를 분석하고 있습니다..."):
-                    try:
-                        gr_res = parse_pending_gr_excel(gr_file, target_date_input, ex_rate_input)
-                        pending_other = gr_res.get('total', 0.0) # GR 파일 전체는 해외 거점 미입고분
-                        
-                        total_siel_actual_rev = 0.0
-                        if 'actual_by_day' in st.session_state:
-                            for day_key, act_day in st.session_state['actual_by_day'].items():
-                                for item in act_day.get('items', []):
-                                    if 'SIEL' in str(item.get('site', '')).upper():
-                                        total_siel_actual_rev += item.get('rev_ok', 0.0)
-                        
-                        # [중복 제외] 해외 거점 미입고액 중 SIEL 당월 누계 실적만큼 차감
-                        final_pending_rev = pending_other
-                        if total_siel_actual_rev > 0:
-                            deducted = max(0.0, pending_other - total_siel_actual_rev)
-                            if deducted < pending_other:
-                                st.warning(f"💡 [중복 제외] 해외 GR 미입고액({pending_other:,.2f}억) 중 출하실적(SIEL 등)에 기 등록된 금액({total_siel_actual_rev:,.2f}억)을 차감 합산합니다.")
-                            final_pending_rev = deducted
-                        
-                        pending_rev = round(final_pending_rev, 2)
-                        st.success(f"✅ 미입고(GR) 해외 법인 실적 반영 완료! (최종 합산액: {pending_rev:,.2f}억원)")
-
-                        pure_m = st.session_state['kpi_data']['monthly'].get('pure_rev_a', 0.0)
-                        carry_m = st.session_state['kpi_data']['monthly'].get('carryover_rev', 0.0)
-                        st.session_state['kpi_data']['monthly']['pending_gr_rev'] = pending_rev
-                        st.session_state['kpi_data']['monthly']['pending_gr_rev_os'] = pending_rev
-                        st.session_state['kpi_data']['monthly']['rev_a'] = round(pure_m + carry_m + pending_rev, 2)
-                        st.session_state['chart_data']['monthly_rev_a'] = [round(pure_m + carry_m + pending_rev, 2)]
-
-                        pure_w = st.session_state['kpi_data']['weekly'].get('pure_rev_a', 0.0)
-                        carry_w = st.session_state['kpi_data']['weekly'].get('carryover_rev', 0.0)
-                        st.session_state['kpi_data']['weekly']['pending_gr_rev'] = pending_rev
-                        st.session_state['kpi_data']['weekly']['pending_gr_rev_os'] = pending_rev
-                        st.session_state['kpi_data']['weekly']['rev_a'] = round(pure_w + carry_w + pending_rev, 2)
-                        if st.session_state['chart_data']['weekly_rev_a']:
-                            st.session_state['chart_data']['weekly_rev_a'][0] = round(pure_w + carry_w + pending_rev, 2)
-
-                        st.session_state['data_loaded'] = True
-                    except Exception as e:
-                        st.error(f"미입고(GR) 파싱 오류: {e}")
-
-            if ship_plan_file:
-                with st.spinner("출하 및 매출 계획(수량 x 단가)을 계산하고 있습니다..."):
-                    try:
-                        s_plan = parse_rtf_main_plan_excel(ship_plan_file, target_date_input, st.session_state['mapping_data'], ex_rate_input)
-                        if s_plan:
-                            # 1. Total KPI
-                            st.session_state['kpi_data']['daily']['ship_p'] = s_plan['daily_ship_p']
-                            st.session_state['kpi_data']['daily']['rev_p'] = s_plan['daily_rev_p']
-                            st.session_state['kpi_data']['weekly']['ship_p'] = s_plan['cur_week_ship_p']
-                            st.session_state['kpi_data']['weekly']['rev_p'] = s_plan['cur_week_rev_p']
-                            st.session_state['kpi_data']['monthly']['ship_p'] = s_plan['cur_month_ship_p']
-                            st.session_state['kpi_data']['monthly']['rev_p'] = s_plan['cur_month_rev_p']
-                            
-                            # 2. VN vs OS Splits
-                            st.session_state['kpi_data']['daily']['ship_p_vn'] = s_plan['vn_ship_p']
-                            st.session_state['kpi_data']['daily']['rev_p_vn'] = s_plan['vn_rev_p']
-                            st.session_state['kpi_data']['daily']['ship_p_os'] = s_plan['os_ship_p']
-                            st.session_state['kpi_data']['daily']['rev_p_os'] = s_plan['os_rev_p']
-                            
-                            st.session_state['kpi_data']['weekly']['ship_p_vn'] = s_plan['vn_w_ship_p']
-                            st.session_state['kpi_data']['weekly']['rev_p_vn'] = s_plan['vn_w_rev_p']
-                            st.session_state['kpi_data']['weekly']['ship_p_os'] = s_plan['os_w_ship_p']
-                            st.session_state['kpi_data']['weekly']['rev_p_os'] = s_plan['os_w_rev_p']
-                            
-                            st.session_state['kpi_data']['monthly']['ship_p_vn'] = s_plan['vn_m_ship_p']
-                            st.session_state['kpi_data']['monthly']['rev_p_vn'] = s_plan['vn_m_rev_p']
-                            st.session_state['kpi_data']['monthly']['ship_p_os'] = s_plan['os_m_ship_p']
-                            st.session_state['kpi_data']['monthly']['rev_p_os'] = s_plan['os_m_rev_p']
-
-                            st.session_state['chart_data']['weekly_ship_p'] = [s_plan['weekly_ship_plan'].get(w, 0) for w in st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])]
-                            st.session_state['chart_data']['weekly_rev_p'] = [s_plan['weekly_rev_plan'].get(w, 0.0) for w in st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])]
-                            st.session_state['chart_data']['monthly_ship_p'] = [s_plan['monthly_ship_plan'].get(m, 0) for m in st.session_state['chart_data'].get('monthly_months', ['11월'])]
-                            st.session_state['chart_data']['monthly_rev_p'] = [s_plan['monthly_rev_plan'].get(m, 0.0) for m in st.session_state['chart_data'].get('monthly_months', ['11월'])]
-
-                            st.session_state['_ship_plan_by_model'] = s_plan['plan_by_model']
-                            st.session_state['_ship_plan_by_site'] = s_plan['plan_by_site']
-                            st.session_state['fcst_data'] = {'rows': s_plan.get('fcst_rows', []), 'date_cols': s_plan.get('fcst_date_cols', [])}
-
-                            st.session_state['data_loaded'] = True
-                            st.success(f"✅ 출하 & 매출 계획 반영 완료! (순수 월간 계획: {format_k(s_plan['cur_month_ship_p'])} / {s_plan['cur_month_rev_p']:,.2f}억원)")
-                    except Exception as e: st.error(f"출하 계획 파싱 오류: {e}")
-
-            with st.spinner("구글 스프레드시트에 동기화 중..."):
-                sync_keys = [
-                    'target_date', 'kpi_data', 'chart_data', 'inventory_data',
-                    'fcst_data', 'actual_by_day', 'mapping_data', 'data_loaded',
-                    '_ship_plan_by_model', '_ship_actual_by_model',
-                    '_ship_plan_by_site', '_ship_actual_by_site'
-                ]
-                save_payload = {k: st.session_state[k] for k in sync_keys if k in st.session_state}
-                is_saved = save_state_to_gsheet(save_payload)
-                if is_saved:
-                    st.success("🎉 구글 시트 저장 완료! 이제 모든 사용자의 화면에 최신 실적이 표시됩니다.")
-
 elif menu == "🏠 현황":
     kpi = st.session_state.get('kpi_data', default_kpis)
     cdata = st.session_state.get('chart_data', default_charts)
     cur_target_date = st.session_state.get('target_date', default_target_date)
 
-    # 💡 상단 헤더: 전체 누계 매출 (월간 기준 총합: 베트남/한국 + 해외)
     m_pure = kpi['monthly'].get('pure_rev_a', 0.0)
     m_carry = kpi['monthly'].get('carryover_rev', 0.0)
     m_pending = kpi['monthly'].get('pending_gr_rev_os', kpi['monthly'].get('pending_gr_rev', 0.0))
@@ -1489,7 +1384,6 @@ elif menu == "🏠 현황":
     tab_monthly, tab_weekly, tab_daily = st.tabs(["🗓️ Monthly", "📊 Weekly", "📅 Daily"])
 
     with tab_monthly:
-        # 월간 데이터 세팅
         m_carry_qty = kpi['monthly'].get('carryover_qty', 0)
         m_carry_rev = kpi['monthly'].get('carryover_rev', 0.0)
         
@@ -1510,14 +1404,12 @@ elif menu == "🏠 현황":
         m_plan_rev_os = round(kpi['monthly'].get('rev_p_os', 0.0) + m_carry_rev_os, 2)
         m_total_rev_os = round(m_pure_rev_os + m_carry_rev_os + m_pending, 2)
 
-        # 💡 [핵심] 3열 요약표 레이아웃 (생산 / VN / OS)
         c1, c2, c3 = st.columns(3)
         
         with c1: 
             render_kpi_card("월간 생산 누계", "🏭", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], category="생산")
             render_achievement_gauge("생산", kpi['monthly']['prod_a'], kpi['monthly']['prod_p'], unit="K", category="생산")
             
-            # 이월 박스는 월간 생산 누계 아래에 단 한 번만 표시
             render_html(f"""
             <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px; padding: 18px; text-align: center; margin-bottom: 24px;">
                 <div style="font-size: 12px; font-weight: 800; color: #64748b; margin-bottom: 12px;">⏳ 전월 이월 (Carryover)</div>
@@ -1588,7 +1480,6 @@ elif menu == "🏠 현황":
         with wc1: 
             render_kpi_card("주간 생산 누계", "🏭", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], category="생산")
             render_achievement_gauge("생산", kpi['weekly']['prod_a'], kpi['weekly']['prod_p'], unit="K", category="생산")
-            # 주차별 탭에는 이월 칸 생략 (디자인 요청 반영)
         with wc2: 
             w_ship_sub_vn = f"출하실적 {format_k(w_ship_a_vn)} + 이월 {format_k(w_carry_qty_vn)}"
             render_kpi_card("주간 출하 (베트남/한국)", "🚚", w_ship_a_vn + w_carry_qty_vn, w_plan_ship_vn, sub_caption=w_ship_sub_vn, category="출하(VN)")
