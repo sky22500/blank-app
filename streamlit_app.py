@@ -1143,9 +1143,13 @@ def create_active_chart(title, categories, plan_data, actual_data, name1="계획
     return fig
 
 # 6. 메인 분기 로직
-if menu == "7. 데이터 관리 (Admin)":
+elif menu == "7. 데이터 관리 (Admin)":
     st.markdown("<h1 style='font-weight: 900; color: #0f172a; letter-spacing: -1px;'>⚙️ DATA MANAGEMENT</h1>", unsafe_allow_html=True)
-    if st.text_input("비밀번호", type="password") == "2250":
+    
+    admin_pwd = st.text_input("비밀번호", type="password")
+    
+    # ------------------ 기존 파일 업로드 기능 (2250) ------------------
+    if admin_pwd == "2250":
         c_set1, c_set2 = st.columns(2)
         with c_set1: target_date_input = st.text_input("📅 조회 기준 날짜 지정 (예: 11/2)", default_target_date)
         with c_set2: ex_rate_input = st.number_input("💵 적용 환율 (원/USD)", value=1350.0, step=10.0)
@@ -1202,7 +1206,6 @@ if menu == "7. 데이터 관리 (Admin)":
                     try:
                         s_act = parse_new_shipment_actual_excel(ship_actual_file, target_date_input, st.session_state['mapping_data'])
                         if s_act:
-                            # 1. Total KPI
                             carryover = s_act['carryover_rev_ok']
                             carry_qty = s_act.get('carryover_qty_ok', 0)
                             pending_gr = st.session_state['kpi_data']['monthly'].get('pending_gr_rev', 0.0)
@@ -1241,32 +1244,11 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.session_state['chart_data']['monthly_ship_a'] = [s_act['monthly_ship_actual'] + carry_qty]
                             st.session_state['chart_data']['monthly_rev_a'] = [round(pure_monthly_rev + carryover + pending_gr, 2)]
                             
-                            # 2. VN vs OS Splits
-                            st.session_state['kpi_data']['daily']['ship_a_vn'] = s_act['vn_ship_a'] + s_act['carryover_qty_vn']
-                            st.session_state['kpi_data']['daily']['pure_rev_a_vn'] = s_act['vn_rev_a']
-                            st.session_state['kpi_data']['daily']['rev_a_vn'] = s_act['vn_rev_a'] + s_act['carryover_rev_vn']
-                            
-                            st.session_state['kpi_data']['daily']['ship_a_os'] = s_act['os_ship_a'] + s_act['carryover_qty_os']
-                            st.session_state['kpi_data']['daily']['pure_rev_a_os'] = s_act['os_rev_a']
-                            st.session_state['kpi_data']['daily']['rev_a_os'] = s_act['os_rev_a'] + s_act['carryover_rev_os']
-                            
-                            st.session_state['kpi_data']['weekly']['ship_a_vn'] = sum(s_act['weekly_ship_a_vn'].values())
-                            st.session_state['kpi_data']['weekly']['pure_rev_a_vn'] = sum(s_act['weekly_rev_a_vn'].values())
-                            st.session_state['kpi_data']['weekly']['carryover_qty_vn'] = s_act['carryover_qty_vn']
-                            st.session_state['kpi_data']['weekly']['carryover_rev_vn'] = s_act['carryover_rev_vn']
-                            st.session_state['kpi_data']['weekly']['ship_a_os'] = sum(s_act['weekly_ship_a_os'].values())
-                            st.session_state['kpi_data']['weekly']['pure_rev_a_os'] = sum(s_act['weekly_rev_a_os'].values())
-                            st.session_state['kpi_data']['weekly']['carryover_qty_os'] = s_act['carryover_qty_os']
-                            st.session_state['kpi_data']['weekly']['carryover_rev_os'] = s_act['carryover_rev_os']
-                            
+                            # VN vs OS Splits (간소화)
                             st.session_state['kpi_data']['monthly']['ship_a_vn'] = s_act['monthly_ship_a_vn']
                             st.session_state['kpi_data']['monthly']['pure_rev_a_vn'] = s_act['monthly_rev_a_vn']
-                            st.session_state['kpi_data']['monthly']['carryover_qty_vn'] = s_act['carryover_qty_vn']
-                            st.session_state['kpi_data']['monthly']['carryover_rev_vn'] = s_act['carryover_rev_vn']
                             st.session_state['kpi_data']['monthly']['ship_a_os'] = s_act['monthly_ship_a_os']
                             st.session_state['kpi_data']['monthly']['pure_rev_a_os'] = s_act['monthly_rev_a_os']
-                            st.session_state['kpi_data']['monthly']['carryover_qty_os'] = s_act['carryover_qty_os']
-                            st.session_state['kpi_data']['monthly']['carryover_rev_os'] = s_act['carryover_rev_os']
 
                             st.session_state['actual_by_day'] = s_act['day_actual_totals']
                             st.session_state['_ship_actual_by_model'] = s_act['actual_by_model']
@@ -1276,6 +1258,104 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.success(f"✅ 출하 실적 반영 완료! (이월 수량: {format_k(carry_qty)} / 이월 매출: {carryover:,.2f}억원)")
                     except Exception as e:
                         st.error(f"출하 실적 파싱 오류: {e}")
+
+            if gr_file:
+                with st.spinner("미입고(GR) 데이터를 분석하고 있습니다..."):
+                    try:
+                        gr_res = parse_pending_gr_excel(gr_file, target_date_input, ex_rate_input)
+                        pending_other = gr_res.get('total', 0.0) 
+                        
+                        total_siel_actual_rev = 0.0
+                        if 'actual_by_day' in st.session_state:
+                            for day_key, act_day in st.session_state['actual_by_day'].items():
+                                for item in act_day.get('items', []):
+                                    if 'SIEL' in str(item.get('site', '')).upper():
+                                        total_siel_actual_rev += item.get('rev_ok', 0.0)
+                        
+                        final_pending_rev = pending_other
+                        if total_siel_actual_rev > 0:
+                            deducted = max(0.0, pending_other - total_siel_actual_rev)
+                            final_pending_rev = deducted
+                        
+                        pending_rev = round(final_pending_rev, 2)
+                        st.success(f"✅ 미입고(GR) 해외 법인 실적 반영 완료! (최종 합산액: {pending_rev:,.2f}억원)")
+
+                        pure_m = st.session_state['kpi_data']['monthly'].get('pure_rev_a', 0.0)
+                        carry_m = st.session_state['kpi_data']['monthly'].get('carryover_rev', 0.0)
+                        st.session_state['kpi_data']['monthly']['pending_gr_rev'] = pending_rev
+                        st.session_state['kpi_data']['monthly']['pending_gr_rev_os'] = pending_rev
+                        st.session_state['kpi_data']['monthly']['rev_a'] = round(pure_m + carry_m + pending_rev, 2)
+                        st.session_state['chart_data']['monthly_rev_a'] = [round(pure_m + carry_m + pending_rev, 2)]
+
+                        st.session_state['data_loaded'] = True
+                    except Exception as e:
+                        st.error(f"미입고(GR) 파싱 오류: {e}")
+
+            if ship_plan_file:
+                with st.spinner("출하 및 매출 계획(수량 x 단가)을 계산하고 있습니다..."):
+                    try:
+                        s_plan = parse_rtf_main_plan_excel(ship_plan_file, target_date_input, st.session_state['mapping_data'], ex_rate_input)
+                        if s_plan:
+                            st.session_state['kpi_data']['monthly']['ship_p'] = s_plan['cur_month_ship_p']
+                            st.session_state['kpi_data']['monthly']['rev_p'] = s_plan['cur_month_rev_p']
+                            st.session_state['chart_data']['monthly_ship_p'] = [s_plan['monthly_ship_plan'].get(m, 0) for m in st.session_state['chart_data'].get('monthly_months', ['11월'])]
+                            st.session_state['chart_data']['monthly_rev_p'] = [s_plan['monthly_rev_plan'].get(m, 0.0) for m in st.session_state['chart_data'].get('monthly_months', ['11월'])]
+                            st.session_state['_ship_plan_by_model'] = s_plan['plan_by_model']
+                            st.session_state['_ship_plan_by_site'] = s_plan['plan_by_site']
+                            st.session_state['fcst_data'] = {'rows': s_plan.get('fcst_rows', []), 'date_cols': s_plan.get('fcst_date_cols', [])}
+                            st.session_state['data_loaded'] = True
+                            st.success(f"✅ 출하 & 매출 계획 반영 완료!")
+                    except Exception as e: st.error(f"출하 계획 파싱 오류: {e}")
+
+            with st.spinner("구글 스프레드시트에 동기화 중..."):
+                sync_keys = [
+                    'target_date', 'kpi_data', 'chart_data', 'inventory_data',
+                    'fcst_data', 'actual_by_day', 'mapping_data', 'data_loaded',
+                    '_ship_plan_by_model', '_ship_actual_by_model',
+                    '_ship_plan_by_site', '_ship_actual_by_site'
+                ]
+                save_payload = {k: st.session_state[k] for k in sync_keys if k in st.session_state}
+                is_saved = save_state_to_gsheet(save_payload)
+                if is_saved:
+                    st.success("🎉 구글 시트 저장 완료! 이제 모든 사용자의 화면에 최신 실적이 표시됩니다.")
+
+    # ------------------ 신규 강제 실적 수정 기능 (7777) ------------------
+    elif admin_pwd == "7777":
+        st.markdown("### 🛠️ 수동 KPI 오버라이드 (강제 수정 모드)")
+        st.warning("⚠️ 이곳에서 수정한 수치는 Main 현황판의 **월간 총 출하 실적**과 **순수 매출 실적**에 즉시 덮어씌워집니다. (기존 이월/미입고 금액은 유지된 채로 합산됩니다.)")
+        
+        # 현재 세션에 저장된 월간 실적 불러오기
+        curr_ship = st.session_state['kpi_data']['monthly'].get('ship_a', 0)
+        curr_rev = st.session_state['kpi_data']['monthly'].get('pure_rev_a', 0.0)
+        
+        new_ship = st.number_input("당월 총 출하 실적 수량 (단위: 개)", value=int(curr_ship), step=1000)
+        new_rev = st.number_input("당월 총 순수 매출 실적 (단위: 억원)", value=float(curr_rev), step=1.0)
+        
+        if st.button("💾 수동 실적 저장 및 구글시트 연동", type="primary"):
+            # 세션 상태 강제 업데이트
+            st.session_state['kpi_data']['monthly']['ship_a'] = new_ship
+            st.session_state['kpi_data']['monthly']['pure_rev_a'] = new_rev
+            
+            # 연관된 총합(Total) 데이터 업데이트
+            carry_rev = st.session_state['kpi_data']['monthly'].get('carryover_rev', 0.0)
+            pending_gr = st.session_state['kpi_data']['monthly'].get('pending_gr_rev', 0.0)
+            
+            st.session_state['kpi_data']['monthly']['rev_a'] = round(new_rev + carry_rev + pending_gr, 2)
+            st.session_state['chart_data']['monthly_ship_a'] = [new_ship]
+            st.session_state['chart_data']['monthly_rev_a'] = [round(new_rev + carry_rev + pending_gr, 2)]
+            
+            with st.spinner("구글 스프레드시트에 강제 업데이트 중..."):
+                sync_keys = [
+                    'target_date', 'kpi_data', 'chart_data', 'inventory_data',
+                    'fcst_data', 'actual_by_day', 'mapping_data', 'data_loaded',
+                    '_ship_plan_by_model', '_ship_actual_by_model',
+                    '_ship_plan_by_site', '_ship_actual_by_site'
+                ]
+                save_payload = {k: st.session_state[k] for k in sync_keys if k in st.session_state}
+                is_saved = save_state_to_gsheet(save_payload)
+                
+                if is_saved:
+                    st.success("🎉 강제 업데이트 완료! Main 현황판에 변경하신 수동 실적이 반영되었습니다.")
 
             if gr_file:
                 with st.spinner("미입고(GR) 데이터를 분석하고 있습니다..."):
