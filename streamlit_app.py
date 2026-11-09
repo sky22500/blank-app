@@ -1326,7 +1326,6 @@ if menu == "7. 데이터 관리 (Admin)":
         
         num_days = calendar.monthrange(cal_year, t_m)[1]
         
-        # 1. State initialization
         if 'manual_daily_data' not in st.session_state:
             md = {d: {'vn_q': 0, 'vn_r': 0.0, 'os_q': 0, 'os_r': 0.0} for d in range(1, 32)}
             if 'actual_by_day' in st.session_state:
@@ -1341,11 +1340,9 @@ if menu == "7. 데이터 관리 (Admin)":
                                 md[d]['os_r'] += it.get('rev_ok', 0.0)
             st.session_state['manual_daily_data'] = md
             
-        # 💡 [핵심 수정] 구글 시트(JSON) 통신 과정에서 문자열로 바뀐 Key를 다시 숫자로 강제 변환
         st.session_state['manual_daily_data'] = {int(k): v for k, v in st.session_state['manual_daily_data'].items()}
         md = st.session_state['manual_daily_data']
         
-        # 2. Calendar UI
         month_matrix = calendar.monthcalendar(cal_year, t_m)
         days_headers = ["일(SUN)", "월(MON)", "화(TUE)", "수(WED)", "목(THU)", "금(FRI)", "토(SAT)"]
         
@@ -1389,6 +1386,7 @@ if menu == "7. 데이터 관리 (Admin)":
             
             c_qty_tot = c_qty_vn + c_qty_os
             c_rev_tot = c_rev_vn + c_rev_os
+            st.session_state['kpi_data']['monthly']['carryover_rev'] = c_rev_tot
             
             td_vals = new_md.get(t_d, {'vn_q':0, 'vn_r':0.0, 'os_q':0, 'os_r':0.0})
             
@@ -1495,7 +1493,11 @@ elif menu == "🏠 현황":
     cur_target_date = st.session_state.get('target_date', default_target_date)
 
     m_pure = kpi['monthly'].get('pure_rev_a', 0.0)
+    
     m_carry = kpi['monthly'].get('carryover_rev', 0.0)
+    if m_carry == 0:
+        m_carry = kpi['monthly'].get('carryover_rev_vn', 0.0) + kpi['monthly'].get('carryover_rev_os', 0.0)
+        
     m_pending = kpi['monthly'].get('pending_gr_rev_os', kpi['monthly'].get('pending_gr_rev', 0.0))
     grand_total_rev = round(m_pure + m_carry + m_pending, 2)
     grand_plan_rev = round(kpi['monthly'].get('rev_p', 0.0) + m_carry, 2)
@@ -1516,7 +1518,10 @@ elif menu == "🏠 현황":
             <div style="position: absolute; top: -10px; left: -10px; opacity: 0.1; font-size: 80px;">💰</div>
             <div style="font-size: 13px; font-weight: 600; opacity: 0.9; letter-spacing: 0.5px; margin-bottom: 4px; position: relative; z-index: 1;">현재까지 누계 매출액 (한국/베트남 + 해외)</div>
             <div style="font-size: 32px; font-weight: 900; letter-spacing: -1px; position: relative; z-index: 1;">{grand_total_rev:,.2f} <span style="font-size: 18px; font-weight: 600;">억원</span></div>
-            <div style="font-size: 12px; opacity: 0.8; margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 6px; position: relative; z-index: 1;">목표액: {grand_plan_rev:,.2f} 억원</div>
+            <div style="font-size: 12px; opacity: 0.9; margin-top: 6px; background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 6px; display: inline-block; position: relative; z-index: 1;">
+                순수 {m_pure:,.2f}억 + 이월 {m_carry:,.2f}억 + 미입고 {m_pending:,.2f}억
+            </div>
+            <div style="font-size: 12px; opacity: 0.8; margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 6px; position: relative; z-index: 1;">목표액: {grand_plan_rev:,.2f} 억원</div>
         </div>
         """)
 
