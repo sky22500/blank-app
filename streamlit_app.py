@@ -1317,38 +1317,175 @@ if menu == "7. 데이터 관리 (Admin)":
                     st.success("🎉 구글 시트 저장 완료! 이제 모든 사용자의 화면에 최신 실적이 표시됩니다.")
 
     elif admin_pwd == "7777":
-        st.markdown("### 🛠️ 수동 KPI 오버라이드 (강제 수정 모드)")
-        st.warning("⚠️ 이곳에서 수정한 수치는 Main 현황판의 **월간 총 출하 실적**과 **순수 매출 실적**에 즉시 덮어씌워집니다. (기존 이월/미입고 금액은 유지된 채로 합산됩니다.)")
+        st.markdown("### 🛠️ 수동 KPI 오버라이드 (일자별 캘린더 입력 모드)")
+        st.warning("⚠️ 캘린더에서 각 일자별 '순수 출하/매출액'을 강제 수정하고 [저장]을 누르면, 일간/주간/월간 등 전체 대시보드와 차트가 수정된 값으로 재계산되어 동기화됩니다.")
         
-        curr_ship = st.session_state['kpi_data']['monthly'].get('ship_a', 0)
-        curr_rev = st.session_state['kpi_data']['monthly'].get('pure_rev_a', 0.0)
+        t_m, t_d = parse_target_day_info(st.session_state.get('target_date', default_target_date))
+        cal_year = 2026
+        if t_m == 1: cal_year = 2027
         
-        new_ship = st.number_input("당월 총 출하 실적 수량 (단위: 개)", value=int(curr_ship), step=1000)
-        new_rev = st.number_input("당월 총 순수 매출 실적 (단위: 억원)", value=float(curr_rev), step=1.0)
+        num_days = calendar.monthrange(cal_year, t_m)[1]
         
-        if st.button("💾 수동 실적 저장 및 구글시트 연동", type="primary"):
-            st.session_state['kpi_data']['monthly']['ship_a'] = new_ship
-            st.session_state['kpi_data']['monthly']['pure_rev_a'] = new_rev
+        # 1. State initialization
+        if 'manual_daily_data' not in st.session_state:
+            md = {d: {'vn_q': 0, 'vn_r': 0.0, 'os_q': 0, 'os_r': 0.0} for d in range(1, 32)}
+            if 'actual_by_day' in st.session_state:
+                for d, data in st.session_state['actual_by_day'].items():
+                    if d in md:
+                        for it in data.get('items', []):
+                            if is_vn_site(it.get('site', '')):
+                                md[d]['vn_q'] += it.get('qty', 0)
+                                md[d]['vn_r'] += it.get('rev_ok', 0.0)
+                            else:
+                                md[d]['os_q'] += it.get('qty', 0)
+                                md[d]['os_r'] += it.get('rev_ok', 0.0)
+            st.session_state['manual_daily_data'] = md
             
-            carry_rev = st.session_state['kpi_data']['monthly'].get('carryover_rev', 0.0)
-            pending_gr = st.session_state['kpi_data']['monthly'].get('pending_gr_rev', 0.0)
+        md = st.session_state['manual_daily_data']
+        
+        # 2. Calendar UI
+        month_matrix = calendar.monthcalendar(cal_year, t_m)
+        days_headers = ["일(SUN)", "월(MON)", "화(TUE)", "수(WED)", "목(THU)", "금(FRI)", "토(SAT)"]
+        
+        h_cols = st.columns(7)
+        for i, h in enumerate(days_headers):
+            h_cols[i].markdown(f"<div style='text-align: center; font-weight: bold; color: #64748b; font-size: 14px; padding-bottom: 10px;'>{h}</div>", unsafe_allow_html=True)
             
-            st.session_state['kpi_data']['monthly']['rev_a'] = round(new_rev + carry_rev + pending_gr, 2)
-            st.session_state['chart_data']['monthly_ship_a'] = [new_ship]
-            st.session_state['chart_data']['monthly_rev_a'] = [round(new_rev + carry_rev + pending_gr, 2)]
+        with st.form("manual_cal_form"):
+            new_md = {}
+            for week in month_matrix:
+                w_cols = st.columns(7)
+                for i, d_num in enumerate(week):
+                    with w_cols[i]:
+                        if d_num != 0:
+                            bg = "#eef2ff" if d_num == t_d else "#ffffff"
+                            border = "2px solid #4f46e5" if d_num == t_d else "1px solid #e2e8f0"
+                            st.markdown(f"<div style='text-align: center; font-weight: 900; color: #0f172a; background: {bg}; border: {border}; border-radius: 8px; padding: 4px; margin-bottom: 4px;'>{d_num}일</div>", unsafe_allow_html=True)
+                            
+                            with st.expander("입력창", expanded=(d_num==t_d)):
+                                st.markdown("<span style='font-size:11px; font-weight:bold;'>🇻🇳 베트남/한국</span>", unsafe_allow_html=True)
+                                vn_q = st.number_input("수량(K)", value=int(md[d_num]['vn_q']), key=f"vq_{d_num}", step=1000, label_visibility="collapsed")
+                                vn_r = st.number_input("매출(억)", value=float(md[d_num]['vn_r']), key=f"vr_{d_num}", step=1.0, label_visibility="collapsed")
+                                st.markdown("<span style='font-size:11px; font-weight:bold; margin-top:8px;'>✈️ 해외</span>", unsafe_allow_html=True)
+                                os_q = st.number_input("수량(K)", value=int(md[d_num]['os_q']), key=f"oq_{d_num}", step=1000, label_visibility="collapsed")
+                                os_r = st.number_input("매출(억)", value=float(md[d_num]['os_r']), key=f"or_{d_num}", step=1.0, label_visibility="collapsed")
+                                new_md[d_num] = {'vn_q': vn_q, 'vn_r': vn_r, 'os_q': os_q, 'os_r': os_r}
+                        else:
+                            st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
+                            
+            submit_btn = st.form_submit_button("💾 캘린더 수동 실적 저장 및 전체 대시보드 강제 동기화", type="primary", use_container_width=True)
             
-            with st.spinner("구글 스프레드시트에 강제 업데이트 중..."):
+        if submit_btn:
+            for d, vals in new_md.items():
+                st.session_state['manual_daily_data'][d] = vals
+                
+            c_qty_vn = st.session_state['kpi_data']['monthly'].get('carryover_qty_vn', 0)
+            c_rev_vn = st.session_state['kpi_data']['monthly'].get('carryover_rev_vn', 0.0)
+            c_qty_os = st.session_state['kpi_data']['monthly'].get('carryover_qty_os', 0)
+            c_rev_os = st.session_state['kpi_data']['monthly'].get('carryover_rev_os', 0.0)
+            p_gr = st.session_state['kpi_data']['monthly'].get('pending_gr_rev', 0.0)
+            
+            c_qty_tot = c_qty_vn + c_qty_os
+            c_rev_tot = c_rev_vn + c_rev_os
+            
+            td_vals = new_md.get(t_d, {'vn_q':0, 'vn_r':0.0, 'os_q':0, 'os_r':0.0})
+            
+            st.session_state['kpi_data']['daily']['ship_a_vn'] = td_vals['vn_q'] + c_qty_vn
+            st.session_state['kpi_data']['daily']['pure_rev_a_vn'] = round(td_vals['vn_r'], 2)
+            st.session_state['kpi_data']['daily']['rev_a_vn'] = round(td_vals['vn_r'] + c_rev_vn, 2)
+            
+            st.session_state['kpi_data']['daily']['ship_a_os'] = td_vals['os_q'] + c_qty_os
+            st.session_state['kpi_data']['daily']['pure_rev_a_os'] = round(td_vals['os_r'], 2)
+            st.session_state['kpi_data']['daily']['rev_a_os'] = round(td_vals['os_r'] + c_rev_os, 2)
+            
+            st.session_state['kpi_data']['daily']['ship_a'] = td_vals['vn_q'] + td_vals['os_q'] + c_qty_tot
+            st.session_state['kpi_data']['daily']['pure_rev_a'] = round(td_vals['vn_r'] + td_vals['os_r'], 2)
+            st.session_state['kpi_data']['daily']['rev_a'] = round(td_vals['vn_r'] + td_vals['os_r'] + c_rev_tot, 2)
+            
+            w_labels = st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
+            w_ship_vn = {w: 0 for w in w_labels}
+            w_rev_vn = {w: 0.0 for w in w_labels}
+            w_ship_os = {w: 0 for w in w_labels}
+            w_rev_os = {w: 0.0 for w in w_labels}
+            
+            for d in range(1, num_days + 1):
+                if d <= t_d: 
+                    try: 
+                        w_lbl = f"W{datetime.date(cal_year, t_m, d).isocalendar()[1]}"
+                    except: 
+                        w_lbl = w_labels[0]
+                    
+                    if w_lbl in w_ship_vn:
+                        w_ship_vn[w_lbl] += new_md[d]['vn_q']
+                        w_rev_vn[w_lbl] += new_md[d]['vn_r']
+                        w_ship_os[w_lbl] += new_md[d]['os_q']
+                        w_rev_os[w_lbl] += new_md[d]['os_r']
+                        
+            chart_w_ship_a = []
+            chart_w_rev_a = []
+            for idx, w in enumerate(w_labels):
+                wq = w_ship_vn[w] + w_ship_os[w]
+                wr = w_rev_vn[w] + w_rev_os[w]
+                if idx == 0:
+                    chart_w_ship_a.append(wq + c_qty_tot)
+                    chart_w_rev_a.append(round(wr + c_rev_tot + p_gr, 2))
+                else:
+                    chart_w_ship_a.append(wq)
+                    chart_w_rev_a.append(round(wr, 2))
+            st.session_state['chart_data']['weekly_ship_a'] = chart_w_ship_a
+            st.session_state['chart_data']['weekly_rev_a'] = chart_w_rev_a
+            
+            st.session_state['kpi_data']['weekly']['ship_a_vn'] = sum(w_ship_vn.values())
+            st.session_state['kpi_data']['weekly']['pure_rev_a_vn'] = sum(w_rev_vn.values())
+            st.session_state['kpi_data']['weekly']['ship_a_os'] = sum(w_ship_os.values())
+            st.session_state['kpi_data']['weekly']['pure_rev_a_os'] = sum(w_rev_os.values())
+            
+            st.session_state['kpi_data']['weekly']['ship_a'] = sum(chart_w_ship_a)
+            st.session_state['kpi_data']['weekly']['pure_rev_a'] = sum(w_rev_vn.values()) + sum(w_rev_os.values())
+            st.session_state['kpi_data']['weekly']['rev_a'] = round(st.session_state['kpi_data']['weekly']['pure_rev_a'] + c_rev_tot + p_gr, 2)
+            
+            m_ship_vn = sum(new_md[d]['vn_q'] for d in range(1, num_days+1) if d <= t_d)
+            m_rev_vn = sum(new_md[d]['vn_r'] for d in range(1, num_days+1) if d <= t_d)
+            m_ship_os = sum(new_md[d]['os_q'] for d in range(1, num_days+1) if d <= t_d)
+            m_rev_os = sum(new_md[d]['os_r'] for d in range(1, num_days+1) if d <= t_d)
+            
+            st.session_state['kpi_data']['monthly']['ship_a_vn'] = m_ship_vn
+            st.session_state['kpi_data']['monthly']['pure_rev_a_vn'] = round(m_rev_vn, 2)
+            st.session_state['kpi_data']['monthly']['ship_a_os'] = m_ship_os
+            st.session_state['kpi_data']['monthly']['pure_rev_a_os'] = round(m_rev_os, 2)
+            
+            tot_m_ship = m_ship_vn + m_ship_os
+            tot_m_rev = m_rev_vn + m_rev_os
+            
+            st.session_state['kpi_data']['monthly']['ship_a'] = tot_m_ship + c_qty_tot
+            st.session_state['kpi_data']['monthly']['pure_rev_a'] = round(tot_m_rev, 2)
+            st.session_state['kpi_data']['monthly']['rev_a'] = round(tot_m_rev + c_rev_tot + p_gr, 2)
+            
+            st.session_state['chart_data']['monthly_ship_a'] = [tot_m_ship + c_qty_tot]
+            st.session_state['chart_data']['monthly_rev_a'] = [round(tot_m_rev + c_rev_tot + p_gr, 2)]
+            
+            for d in range(1, num_days + 1):
+                if d in new_md:
+                    st.session_state['actual_by_day'][d] = {
+                        'qty': new_md[d]['vn_q'] + new_md[d]['os_q'],
+                        'rev': new_md[d]['vn_r'] + new_md[d]['os_r'],
+                        'items': [
+                            {'model': '수동수정(VN)', 'site': 'SEVT', 'qty': new_md[d]['vn_q'], 'rev_ok': new_md[d]['vn_r'], 'price': 0},
+                            {'model': '수동수정(OS)', 'site': 'OTHER', 'qty': new_md[d]['os_q'], 'rev_ok': new_md[d]['os_r'], 'price': 0}
+                        ]
+                    }
+
+            with st.spinner("구글 스프레드시트에 동기화 중..."):
                 sync_keys = [
                     'target_date', 'kpi_data', 'chart_data', 'inventory_data',
                     'fcst_data', 'actual_by_day', 'mapping_data', 'data_loaded',
-                    '_ship_plan_by_model', '_ship_actual_by_model',
-                    '_ship_plan_by_site', '_ship_actual_by_site'
+                    'manual_daily_data'
                 ]
                 save_payload = {k: st.session_state[k] for k in sync_keys if k in st.session_state}
                 is_saved = save_state_to_gsheet(save_payload)
-                
                 if is_saved:
-                    st.success("🎉 강제 업데이트 완료! Main 현황판에 변경하신 수동 실적이 반영되었습니다.")
+                    st.success("🎉 강제 업데이트 완료! 모든 일간/주간/월간 실적이 캘린더 입력값 기준으로 재계산되어 반영되었습니다.")
+                    st.rerun()
 
 elif menu == "🏠 현황":
     kpi = st.session_state.get('kpi_data', default_kpis)
