@@ -1206,11 +1206,9 @@ if menu == "7. 데이터 관리 (Admin)":
                         if s_act:
                             carryover = s_act['carryover_rev_ok']
                             carry_qty = s_act.get('carryover_qty_ok', 0)
-                            pending_gr = st.session_state['kpi_data']['monthly'].get('pending_gr_rev', 0.0)
                             
                             st.session_state['kpi_data']['daily']['ship_a'] = s_act['daily_ship_a']
                             st.session_state['kpi_data']['daily']['pure_rev_a'] = s_act['daily_rev_a']
-                            st.session_state['kpi_data']['daily']['rev_a'] = s_act['daily_rev_a']
                             
                             pure_weekly_rev = sum(s_act['weekly_rev_actual'].values())
                             w_labels = st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
@@ -1226,16 +1224,14 @@ if menu == "7. 데이터 관리 (Admin)":
                             
                             st.session_state['kpi_data']['weekly']['ship_a'] = sum(w_ship_a)
                             st.session_state['kpi_data']['weekly']['pure_rev_a'] = round(pure_weekly_rev, 2)
-                            st.session_state['kpi_data']['weekly']['carryover_rev'] = carryover
-                            st.session_state['kpi_data']['weekly']['carryover_qty'] = carry_qty
-                            st.session_state['kpi_data']['weekly']['rev_a'] = round(pure_weekly_rev, 2)
                             
                             pure_monthly_rev = s_act['monthly_rev_actual']
                             st.session_state['kpi_data']['monthly']['ship_a'] = s_act['monthly_ship_actual']
                             st.session_state['kpi_data']['monthly']['pure_rev_a'] = pure_monthly_rev
+                            
                             st.session_state['kpi_data']['monthly']['carryover_rev'] = carryover
                             st.session_state['kpi_data']['monthly']['carryover_qty'] = carry_qty
-                            st.session_state['kpi_data']['monthly']['rev_a'] = round(pure_monthly_rev, 2)
+                            
                             st.session_state['chart_data']['monthly_ship_a'] = [s_act['monthly_ship_actual']]
                             st.session_state['chart_data']['monthly_rev_a'] = [round(pure_monthly_rev, 2)]
                             
@@ -1249,7 +1245,7 @@ if menu == "7. 데이터 관리 (Admin)":
                             st.session_state['_ship_actual_by_site'] = s_act['actual_by_site']
                             
                             st.session_state['data_loaded'] = True
-                            st.success(f"✅ 출하 실적 반영 완료! (이월 수량: {format_k(carry_qty)} / 이월 매출: {carryover:,.2f}억원)")
+                            st.success(f"✅ 출하 실적 반영 완료! (순수 월간 매출: {pure_monthly_rev:,.2f}억원)")
                     except Exception as e:
                         st.error(f"출하 실적 파싱 오류: {e}")
 
@@ -1373,18 +1369,14 @@ if menu == "7. 데이터 관리 (Admin)":
                 
             td_vals = new_md.get(t_d, {'vn_q':0, 'vn_r':0.0, 'os_q':0, 'os_r':0.0})
             
-            # [수정됨] 일간(Daily)에는 오직 '순수' 매출과 수량만 덮어씌움 (이월 제외)
             st.session_state['kpi_data']['daily']['ship_a_vn'] = td_vals['vn_q']
             st.session_state['kpi_data']['daily']['pure_rev_a_vn'] = round(td_vals['vn_r'], 2)
-            st.session_state['kpi_data']['daily']['rev_a_vn'] = round(td_vals['vn_r'], 2)
             
             st.session_state['kpi_data']['daily']['ship_a_os'] = td_vals['os_q']
             st.session_state['kpi_data']['daily']['pure_rev_a_os'] = round(td_vals['os_r'], 2)
-            st.session_state['kpi_data']['daily']['rev_a_os'] = round(td_vals['os_r'], 2)
             
             st.session_state['kpi_data']['daily']['ship_a'] = td_vals['vn_q'] + td_vals['os_q']
             st.session_state['kpi_data']['daily']['pure_rev_a'] = round(td_vals['vn_r'] + td_vals['os_r'], 2)
-            st.session_state['kpi_data']['daily']['rev_a'] = round(td_vals['vn_r'] + td_vals['os_r'], 2)
             
             w_labels = st.session_state['chart_data'].get('weekly_weeks', ['W45', 'W46', 'W47', 'W48'])
             w_ship_vn = {w: 0 for w in w_labels}
@@ -1416,7 +1408,6 @@ if menu == "7. 데이터 관리 (Admin)":
             st.session_state['chart_data']['weekly_ship_a'] = chart_w_ship_a
             st.session_state['chart_data']['weekly_rev_a'] = chart_w_rev_a
             
-            # [수정됨] 주간(Weekly)에도 순수 매출/수량만 업데이트
             st.session_state['kpi_data']['weekly']['ship_a_vn'] = sum(w_ship_vn.values())
             st.session_state['kpi_data']['weekly']['pure_rev_a_vn'] = sum(w_rev_vn.values())
             st.session_state['kpi_data']['weekly']['ship_a_os'] = sum(w_ship_os.values())
@@ -1424,14 +1415,12 @@ if menu == "7. 데이터 관리 (Admin)":
             
             st.session_state['kpi_data']['weekly']['ship_a'] = sum(chart_w_ship_a)
             st.session_state['kpi_data']['weekly']['pure_rev_a'] = sum(w_rev_vn.values()) + sum(w_rev_os.values())
-            st.session_state['kpi_data']['weekly']['rev_a'] = round(st.session_state['kpi_data']['weekly']['pure_rev_a'], 2)
             
             m_ship_vn = sum(new_md[d]['vn_q'] for d in range(1, num_days+1) if d <= t_d)
             m_rev_vn = sum(new_md[d]['vn_r'] for d in range(1, num_days+1) if d <= t_d)
             m_ship_os = sum(new_md[d]['os_q'] for d in range(1, num_days+1) if d <= t_d)
             m_rev_os = sum(new_md[d]['os_r'] for d in range(1, num_days+1) if d <= t_d)
             
-            # [수정됨] 월간(Monthly)에도 순수 매출/수량만 업데이트
             st.session_state['kpi_data']['monthly']['ship_a_vn'] = m_ship_vn
             st.session_state['kpi_data']['monthly']['pure_rev_a_vn'] = round(m_rev_vn, 2)
             st.session_state['kpi_data']['monthly']['ship_a_os'] = m_ship_os
@@ -1442,7 +1431,6 @@ if menu == "7. 데이터 관리 (Admin)":
             
             st.session_state['kpi_data']['monthly']['ship_a'] = tot_m_ship
             st.session_state['kpi_data']['monthly']['pure_rev_a'] = round(tot_m_rev, 2)
-            st.session_state['kpi_data']['monthly']['rev_a'] = round(tot_m_rev, 2)
             
             st.session_state['chart_data']['monthly_ship_a'] = [tot_m_ship]
             st.session_state['chart_data']['monthly_rev_a'] = [round(tot_m_rev, 2)]
@@ -1475,7 +1463,6 @@ elif menu == "🏠 현황":
     cdata = st.session_state.get('chart_data', default_charts)
     cur_target_date = st.session_state.get('target_date', default_target_date)
 
-    # 상단 총 누계: 순수 실적 + 이월 금액 + 미입고 금액
     m_pure = kpi['monthly'].get('pure_rev_a', 0.0)
     
     m_carry = kpi['monthly'].get('carryover_rev', 0.0)
@@ -1512,7 +1499,6 @@ elif menu == "🏠 현황":
     tab_monthly, tab_weekly, tab_daily = st.tabs(["🗓️ Monthly", "📊 Weekly", "📅 Daily"])
 
     with tab_monthly:
-        # [수정됨] 월간 카드에는 '순수 매출'과 '순수 출하' 데이터만 매핑
         m_ship_a_vn = kpi['monthly'].get('ship_a_vn', 0)
         m_plan_ship_vn = kpi['monthly'].get('ship_p_vn', 0)
         m_pure_rev_vn = kpi['monthly'].get('pure_rev_a_vn', 0.0)
@@ -1901,7 +1887,7 @@ elif menu == "6. 캘린더":
                     rev_val = (q * price) / 100_000_000.0 if price > 0 else 0.0
                     day_supply_map[d]['total'] += q
                     day_supply_map[d]['total_rev'] += rev_val
-                    day_supply_map[d]['itemsappend']({
+                    day_supply_map[d]['items'].append({
                         'model': m_name, 'gh_code': gh, 'site': site, 'qty': q, 'price': price, 'rev_ok': rev_val
                     })
                     
