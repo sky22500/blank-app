@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 # 1. 페이지 설정 및 영구 저장소 경로 설정
 st.set_page_config(page_title="마케팅 부문 대시보드", layout="wide")
 
-STATE_VERSION = 8
+STATE_VERSION = 9
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 STORE_DIR = os.path.join(BASE_DIR, ".dashboard_store")
 STATE_JSON_PATH = os.path.join(STORE_DIR, "dashboard_state.json")
@@ -480,6 +480,8 @@ def parse_production_excel(file_src, target_date_str):
     target_iso_week = get_iso_week_label(target_date_obj)
 
     parsed = {
+        "rtf_prev_carryover_qty": 0,
+        "rtf_prev_carryover_rev": 0.0,
         "daily_prod_plan": 0,
         "daily_prod_actual": 0,
         "cur_week_label": target_iso_week,
@@ -716,6 +718,21 @@ def parse_production_excel(file_src, target_date_str):
         if scale_k and 0 < abs(v) < 100_000:
             v *= 1000.0
         return float(v)
+
+    # 전월 이월(C열 등 '이월' 열) 값 추출 (예: 출하 228K, 매출 18억)
+    carry_col = None
+    for r in range(summary_start, summary_start + 3):
+        for c in range(1, min(10, sheet.max_column + 1)):
+            if "이월" in norm_txt(safe_cell(sheet, r, c)):
+                carry_col = c
+                break
+        if carry_col:
+            break
+    if carry_col is None:
+        carry_col = 3
+
+    parsed["rtf_prev_carryover_qty"] = int(round(get_raw_num(ship_act_row, carry_col, scale_k=True)))
+    parsed["rtf_prev_carryover_rev"] = round(get_raw_num(rev_act_row, carry_col, scale_k=False), 2)
 
     cal_prod_days = {}
     for c_idx, dt_obj in sorted(daily_date_cols.items(), key=lambda x: x[1]):
@@ -1872,6 +1889,8 @@ def run_dashboard_pipeline(target_date_input, ex_rate_input, uploaded_files):
             st.session_state["inventory_data"]["qty"] = p["inventory_qty"]
             st.session_state["inventory_data"]["days"] = p["inventory_days"]
             st.session_state["calendar_daily_from_prod"] = p.get("calendar_daily_from_prod", {})
+            st.session_state["rtf_prev_carryover_qty"] = int(p.get("rtf_prev_carryover_qty", 0))
+            st.session_state["rtf_prev_carryover_rev"] = round(float(p.get("rtf_prev_carryover_rev", 0.0)), 2)
             st.session_state["data_loaded"] = True
             messages.append(
                 (
@@ -3486,6 +3505,9 @@ elif menu == "5. 캘린더":
                 """
                 )
 
+        rtf_carry_q = int(st.session_state.get("rtf_prev_carryover_qty", 0))
+        rtf_carry_rev = round(float(st.session_state.get("rtf_prev_carryover_rev", 0.0)), 2)
+
         for week in month_matrix:
             w_cols = st.columns(7)
             for day_idx, d_num in enumerate(week):
@@ -3494,6 +3516,46 @@ elif menu == "5. 캘린더":
                         render_html(
                             "<div style='height: 112px; background: rgba(0,0,0,0.02); border: 1px dashed #d1d5db; border-radius: 4px; margin-bottom: 6px;'></div>"
                         )
+                    elif 2 <= d_num <= 5:
+                        # 2~5일: 엑셀표와 동일한 계획/실적 값 유지하되 표기 라벨을 'RTF 수립 이전'으로 통일
+                        cell_date = datetime.date(cur_year, selected_m, d_num)
+                        ymd_key = cell_date.strftime("%Y-%m-%d")
+                        d_info = day_supply_map[d_num]
+                        plan_q = d_info["total"]
+                        plan_rev = d_info["total_rev"]
+                        act_day_data = (
+                            cal_prod_actual_override.get(ymd_key)
+                            if "cal_prod_actual_override" in locals() and ymd_key in cal_prod_actual_override
+                            else actual_by_date.get(ymd_key, {"qty": 0, "rev": 0.0, "items": []})
+                        )
+                        act_q = act_day_data["qty"]
+                        act_rev = act_day_data["rev"]
+
+                        disp_q_val = act_q if act_q > 0 else (plan_q if plan_q > 0 else rtf_carry_q)
+                        disp_rev_val = act_rev if act_rev > 0 else (plan_rev if plan_rev > 0 else rtf_carry_rev)
+
+                        day_color = "#ef4444" if day_idx == 0 else ("#0044ff" if day_idx == 6 else "#111111")
+                        rtf_html = f"""
+                        <div class="cal-card-wrapper">
+                            <div class="cal-card" style="background: #ffffff; border: 2px solid #111111; box-shadow: 3px 3px 0px #111111;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #e5e7eb; padding-bottom: 3px; margin-bottom: 4px;">
+                                    <span style="font-weight: 900; font-size: 15px; color: {day_color};">{d_num}</span>
+                                    <span style="font-size: 10px; font-weight: 800; color: #0044ff;">RTF 수립 이전</span>
+                                </div>
+                                <div style="font-size: 11px; font-weight: 800; color: #111111; line-height: 1.45; margin-top: 4px;">
+                                    <div>RTF 수립 이전 : <b>{format_k(disp_q_val)}</b></div>
+                                    <div>RTF 수립 이전 : <b style="color:#0044ff;">{disp_rev_val:,.2f}억</b></div>
+                                </div>
+                            </div>
+                        </div>
+                        """
+                        render_html(rtf_html)
+                        if st.button(f"🔍 {d_num}일 상세", key=f"btn_pop_rtf_{cur_year}_{selected_m}_{d_num}", use_container_width=True):
+                            if hasattr(st, "dialog"):
+                                show_day_detail_dialog(d_num, selected_m, cur_year, d_info, act_day_data, True)
+                            else:
+                                st.session_state["active_cal_popup"] = (d_num, selected_m, cur_year, True)
+                                st.rerun()
                     else:
                         cell_date = datetime.date(cur_year, selected_m, d_num)
                         ymd_key = cell_date.strftime("%Y-%m-%d")
