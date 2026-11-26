@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 # 1. 페이지 설정 및 영구 저장소 경로 설정
 st.set_page_config(page_title="마케팅 부문 대시보드", layout="wide")
 
-STATE_VERSION = 5
+STATE_VERSION = 6
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 STORE_DIR = os.path.join(BASE_DIR, ".dashboard_store")
 STATE_JSON_PATH = os.path.join(STORE_DIR, "dashboard_state.json")
@@ -464,7 +464,7 @@ def parse_mapping_excel(file_src):
         return None
 
 
-# 4-2. 생산 실적 파일 파서 (생산 섹션 전용 분리 · 주차별 순실적 계산 · 완제품재고 정밀 추출)
+# 4-2. 생산 실적 파일 파서 (생산 섹션 전용 분리 · 주차별 합계 · 완제품재고 추출)
 def parse_production_excel(file_src, target_date_str):
     wb = openpyxl.load_workbook(file_src, data_only=True)
     t_y, t_m, t_d = parse_target_ymd(target_date_str)
@@ -496,7 +496,7 @@ def parse_production_excel(file_src, target_date_str):
     sheet = wb[summary_sheet_name]
     merged_map = build_merged_lookup(sheet)
 
-    # 1) 당일 완제품재고 추출 (하단 '당일 완제품재고' 아래 '수량' / '재고일수' 행 탐색)
+    # 1) 당일 완제품재고 추출
     for r in range(1, sheet.max_row + 1):
         row_joined = "".join(norm_txt(safe_cell(sheet, r, c)) for c in range(1, 8))
         if "당일완제품재고" in row_joined:
@@ -523,10 +523,10 @@ def parse_production_excel(file_src, target_date_str):
             summary_start = r
             break
 
-    # 3) 헤더 행에서 일자별 컬럼, 주차 합계('W45 합계' 등), 월합계('11월 합계') 위치 파악
+    # 3) 헤더 행에서 기준일 열, 주차 합계 열('W45 합계' 등), 월합계 열('11월 합계') 추출
     col_map = {}
     weekly_sum_cols = {}
-    daily_date_cols = {}  # col_idx -> datetime.date
+    daily_date_cols = {}
 
     for r in range(summary_start, summary_start + 3):
         run_yr = t_y
@@ -553,7 +553,7 @@ def parse_production_excel(file_src, target_date_str):
                 if dt_cand is not None and c not in daily_date_cols:
                     daily_date_cols[c] = dt_cand
 
-    # 4) 오직 '생산' 블록('11월 생산 계획 대비 실적')의 '계획' / '실적' 행만 정확히 추출 (출하/매출 블록 합산 방지!)
+    # 4) '생산' 섹션의 '계획' / '실적' 행만 정확히 선택
     prod_plan_row = None
     prod_act_row = None
 
@@ -563,8 +563,6 @@ def parse_production_excel(file_src, target_date_str):
 
         if any(stop_k in (grp_a + lbl_b) for stop_k in ("당일완제품재고", "주요모델별")):
             break
-
-        # '출하' 또는 '매출' 섹션에 진입하면 생산 행 탐색 종료
         if ("출하" in grp_a or "매출" in grp_a) and "생산" not in grp_a:
             if prod_plan_row is not None:
                 break
@@ -582,7 +580,6 @@ def parse_production_excel(file_src, target_date_str):
         v = extract_num(merged_cell(sheet, merged_map, r, c))
         if v is None or v == 0:
             return 0
-        # 요약 시트 단위가 K(예: 172 -> 172,000, 4,477 -> 4,477,000)이므로 100,000 미만은 x1,000 변환
         if 0 < abs(v) < 100_000:
             v *= 1000.0
         return int(round(v))
@@ -590,10 +587,10 @@ def parse_production_excel(file_src, target_date_str):
     parsed["daily_prod_plan"] = get_k_scaled_val(prod_plan_row, col_map.get("target"))
     parsed["daily_prod_actual"] = get_k_scaled_val(prod_act_row, col_map.get("target"))
 
-    # 5) 주차별 계획 및 순수 주간 실적 산출 ('Wxx 합계' 실적 셀이 누계로 병합되어 있으므로 일별 실적 합산 우선)
+    # 5) 주차별 계획 및 실적 산출
     sorted_weeks = sorted(weekly_sum_cols.items(), key=lambda x: x[1])
     labels, wp, wa = [], [], []
-    prev_bound_col = 3  # C열(10월 이월) 이후부터 스캔
+    prev_bound_col = 3
     prev_cum_act = 0
     matched_week_lbl = target_iso_week
 
@@ -601,7 +598,6 @@ def parse_production_excel(file_src, target_date_str):
         w_plan_val = get_k_scaled_val(prod_plan_row, w_col)
         w_sheet_act = get_k_scaled_val(prod_act_row, w_col)
 
-        # prev_bound_col + 1 ~ w_col - 1 구간의 일별 컬럼 중 기준일 이하 실적 합산
         day_cols_in_span = [
             c for c in range(prev_bound_col + 1, w_col)
             if (c in daily_date_cols and daily_date_cols[c] <= target_date_obj)
@@ -613,13 +609,11 @@ def parse_production_excel(file_src, target_date_str):
 
         if day_cols_in_span:
             pure_w_act = sum(get_k_scaled_val(prod_act_row, c) for c in day_cols_in_span)
-            # 첫 주차(W45)에 시트상 누계가 일별 합보다 크면(이월 등) 보정
             if not labels and w_sheet_act > pure_w_act and all_days_in_span and max(all_days_in_span) <= target_date_obj:
                 pure_w_act = w_sheet_act
         elif all_days_in_span and min(all_days_in_span) > target_date_obj:
             pure_w_act = 0
         else:
-            # 일별 날짜 헤더가 없는 경우 주차 합계(누계) 차분으로 계산
             pure_w_act = max(0, w_sheet_act - prev_cum_act) if w_sheet_act >= prev_cum_act else w_sheet_act
 
         if w_sheet_act > prev_cum_act:
@@ -642,20 +636,16 @@ def parse_production_excel(file_src, target_date_str):
     parsed["cur_week_prod_p"] = week_plan_map.get(matched_week_lbl, 0)
     parsed["cur_week_prod_a"] = week_act_map.get(matched_week_lbl, 0)
 
-    # 6) 월간 생산 계획 & 실적 산출
+    # 6) 월간 생산 계획 & 실적 산출 ('11월 합계' 열 우선 반영)
     m_plan = get_k_scaled_val(prod_plan_row, col_map.get("월합계"))
     m_sheet_act = get_k_scaled_val(prod_act_row, col_map.get("월합계"))
-
-    # 기준일까지의 전체 일별 실적 합계 (당주 진행분 포함)
-    valid_month_day_cols = [
-        c for c, dt in daily_date_cols.items()
-        if dt.year == t_y and dt.month == t_m and dt <= target_date_obj
-    ]
-    sum_daily_month_act = sum(get_k_scaled_val(prod_act_row, c) for c in valid_month_day_cols)
     sum_weekly_act = sum(wa)
 
-    # 시트의 '11월 합계' 수식이 완료된 주차(예: W47=3,260K)까지만 잡혀 있고 당주(W48=281K)가 빠진 경우 자동 합산
-    best_m_act = max(m_sheet_act, sum_weekly_act, sum_daily_month_act)
+    if m_sheet_act > 0:
+        best_m_act = max(m_sheet_act, sum_weekly_act) if sum_weekly_act <= m_sheet_act * 1.5 else m_sheet_act
+    else:
+        best_m_act = sum_weekly_act
+
     parsed["monthly_plan"] = m_plan
     parsed["monthly_actual"] = best_m_act
     parsed["monthly_sheet_total"] = m_sheet_act
