@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 # 1. 페이지 설정 및 영구 저장소 경로 설정
 st.set_page_config(page_title="마케팅 부문 대시보드", layout="wide")
 
-STATE_VERSION = 9
+STATE_VERSION = 10
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 STORE_DIR = os.path.join(BASE_DIR, ".dashboard_store")
 STATE_JSON_PATH = os.path.join(STORE_DIR, "dashboard_state.json")
@@ -28,6 +28,11 @@ today = datetime.date.today()
 yesterday = today - datetime.timedelta(days=1)
 default_target_date = f"{yesterday.month}/{yesterday.day}"
 
+
+
+def get_today_md_str():
+    now_d = datetime.date.today()
+    return f"{now_d.month}/{now_d.day}"
 
 def render_html(html_str):
     if hasattr(st, "html"):
@@ -2245,7 +2250,7 @@ def render_shipment_html_table(rows, is_summary=False, month_lbl="11월", ref_lb
                 <tr style="background:#24476e; color:#ffffff; font-weight:800;">
                     {left_headers}
                     <th colspan="2" style="padding:8px; border:1px solid #111;">{month_lbl} 계획</th>
-                    <th colspan="2" style="padding:8px; border:1px solid #111;">목표{ref_suffix}</th>
+                    <th colspan="2" style="padding:8px; border:1px solid #111;">목표 (~{get_today_md_str()}){ref_suffix}</th>
                     <th colspan="2" style="padding:8px; border:1px solid #111;">실적{ref_suffix}</th>
                     <th colspan="2" style="padding:8px; border:1px solid #111;">목표 대비 차이</th>
                     <th colspan="2" style="padding:8px; border:1px solid #111;">진도율</th>
@@ -2638,8 +2643,9 @@ elif menu == "🏠 현황":
         m1, m2, m3 = st.columns(3)
         t_ship_goal = kpi["monthly"].get("target_ship", 0)
         t_rev_goal = kpi["monthly"].get("target_rev", 0.0)
-        ship_sub = f"기준일 누적 목표: {format_k(t_ship_goal)} (목표 대비 {fmt_signed_k(kpi['monthly']['ship_a'] - t_ship_goal)})" if t_ship_goal > 0 else None
-        rev_sub = f"기준일 누적 목표: {t_rev_goal:,.1f}억 (목표 대비 {kpi['monthly']['rev_a'] - t_rev_goal:+,.1f}억)" if t_rev_goal > 0 else None
+        today_md = get_today_md_str()
+        ship_sub = f"목표 (~{today_md}): {format_k(t_ship_goal)} (목표 대비 {fmt_signed_k(kpi['monthly']['ship_a'] - t_ship_goal)})" if t_ship_goal > 0 else None
+        rev_sub = f"목표 (~{today_md}): {t_rev_goal:,.1f}억 (목표 대비 {kpi['monthly']['rev_a'] - t_rev_goal:+,.1f}억)" if t_rev_goal > 0 else None
 
         p_sheet_tot = kpi["monthly"].get("prod_sheet_total", 0)
         p_cur_add = kpi["monthly"].get("prod_cur_w_add", 0)
@@ -2891,11 +2897,12 @@ elif menu == "1. 모델별 출하실적":
                                 textposition="outside",
                             )
                         )
+                        today_md_1 = get_today_md_str()
                         fig_q.add_trace(
                             go.Bar(
                                 x=x_labels,
                                 y=[r["target_qty"] for r in chart_rows],
-                                name="목표",
+                                name=f"목표 (~{today_md_1})",
                                 marker_color="#10b981",
                                 marker_line=dict(width=1.2, color="#111"),
                                 text=[format_k(r["target_qty"]) if r["target_qty"] > 0 else "" for r in chart_rows],
@@ -2939,7 +2946,7 @@ elif menu == "1. 모델별 출하실적":
                             go.Bar(
                                 x=x_labels,
                                 y=[r["target_amt"] for r in chart_rows],
-                                name="목표(억)",
+                                name=f"목표 (~{today_md_1})(억)",
                                 marker_color="#10b981",
                                 marker_line=dict(width=1.2, color="#111"),
                                 text=[f"{r['target_amt']:,.1f}" if r["target_amt"] > 0 else "" for r in chart_rows],
@@ -2972,7 +2979,7 @@ elif menu == "1. 모델별 출하실적":
                             go.Bar(
                                 x=x_labels,
                                 y=[r["rate_target"] for r in chart_rows],
-                                name="목표 진도율(%)",
+                                name=f"목표 (~{today_md_1}) 진도율(%)",
                                 marker_color="#9ca3af",
                                 marker_line=dict(width=1.2, color="#111"),
                                 text=[f"{r['rate_target']:,.0f}%" for r in chart_rows],
@@ -3105,7 +3112,8 @@ elif menu == "1. 모델별 출하실적":
                 st.info("파일 내 '진도현황' 시트 데이터가 없습니다.")
 
 elif menu == "2. 모델별 생산실적":
-    st.subheader("🛠️ 2. 모델별 생산실적")
+    today_md_2 = get_today_md_str()
+    st.subheader(f"🛠️ 2. 모델별 생산실적 · 목표 (~{today_md_2})")
     cdata = st.session_state["chart_data"]
     st.plotly_chart(
         create_active_chart(
