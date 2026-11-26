@@ -62,6 +62,22 @@ def format_k(val):
     return f"{k_val:,.1f}K"
 
 
+def fmt_signed_k(val):
+    if val is None or pd.isna(val) or val == 0:
+        return "0K"
+    sign = "-" if val < 0 else ""
+    return f"{sign}{format_k(abs(val))}"
+
+
+def fmt_amt_ok(val, always_decimal=True):
+    if val is None or pd.isna(val):
+        return "0.0억" if always_decimal else "0억"
+    v = float(val)
+    if not always_decimal and round(v, 1).is_integer():
+        return f"{int(round(v)):,}억"
+    return f"{v:,.1f}억"
+
+
 def get_gh_suffix(code):
     s = clean_key(code)
     m = re.search(r"GH(?:86|96)?(\d+.*)$", s)
@@ -93,7 +109,6 @@ def parse_target_ymd(target_str, ref_date=None):
     ref = ref_date or yesterday
     s = str(target_str or "").strip()
 
-    # YYYY-MM-DD, YYYY/MM/DD, YY.MM.DD 형식 지원
     m_full = re.search(r"\b(\d{2,4})\s*[-/.]\s*0?(\d{1,2})\s*[-/.]\s*0?(\d{1,2})\b", s)
     if m_full:
         y_raw = int(m_full.group(1))
@@ -101,7 +116,6 @@ def parse_target_ymd(target_str, ref_date=None):
         dt = clamp_date(y, int(m_full.group(2)), int(m_full.group(3)))
         return dt.year, dt.month, dt.day
 
-    # M/D, M-D, M.D 형식 지원
     m_md = re.search(r"\b0?(\d{1,2})\s*[-/.]\s*0?(\d{1,2})\b", s)
     if m_md:
         mon = int(m_md.group(1))
@@ -110,18 +124,12 @@ def parse_target_ymd(target_str, ref_date=None):
         dt = clamp_date(y, mon, day)
         return dt.year, dt.month, dt.day
 
-    # D일 단독 형식 지원
     m_d = re.search(r"(\d{1,2})일?", s)
     if m_d:
         dt = clamp_date(ref.year, ref.month, int(m_d.group(1)))
         return dt.year, dt.month, dt.day
 
     return ref.year, ref.month, ref.day
-
-
-def parse_target_day_info(target_str):
-    _, m, d = parse_target_ymd(target_str)
-    return m, d
 
 
 def get_iso_week_key(d_obj):
@@ -203,6 +211,12 @@ def get_default_state():
         "data_loaded": False,
         "mapping_data": {"gh_map": {}, "suffix_map": {}, "model_map": {}, "gh_to_model": {}},
         "fcst_data": {"rows": [], "date_cols": []},
+        "shipment_report": {
+            "month_label": "",
+            "ref_date_label": "",
+            "summary_rows": [],
+            "detail_rows": [],
+        },
         "actual_by_date": {},
         "actual_months_loaded": [],
         "inventory_data": {"qty": 0, "days": 0.0},
@@ -249,9 +263,7 @@ def get_default_state():
             "monthly_rev_p": [0.0],
             "monthly_rev_a": [0.0],
             "ship_by_model": [],
-            "ship_by_site": [],
             "ship_by_model_period": {"daily": [], "weekly": [], "monthly": []},
-            "ship_by_site_period": {"daily": [], "weekly": [], "monthly": []},
         },
     }
 
@@ -418,6 +430,90 @@ def render_achievement_gauge(title, actual, plan, unit="K"):
     render_html(html)
 
 
+def render_shipment_html_table(rows, is_summary=False, month_lbl="11월", ref_lbl=""):
+    ref_suffix = f" ~{ref_lbl}" if (is_summary and ref_lbl) else ""
+    left_headers = (
+        '<th rowspan="2" style="min-width:140px; border:1px solid #111;">구분</th>'
+        if is_summary
+        else (
+            '<th rowspan="2" style="border:1px solid #111;">구분</th>'
+            '<th rowspan="2" style="border:1px solid #111;">과제명</th>'
+            '<th rowspan="2" style="border:1px solid #111;">모델명</th>'
+        )
+    )
+
+    body_html = ""
+    for idx, r in enumerate(rows):
+        is_est_row = is_summary and ("예상" in r["구분"] or (idx == len(rows) - 1 and len(rows) > 1))
+        row_bg = "#dce6f2" if is_est_row else "#ffffff"
+        fw = "800" if is_est_row else "600"
+
+        dq_bg = "#f8d7da" if r["diff_qty"] < 0 else row_bg
+        dq_col = "#b91c1c" if r["diff_qty"] < 0 else "#111111"
+        da_bg = "#f8d7da" if r["diff_amt"] < 0 else row_bg
+        da_col = "#b91c1c" if r["diff_amt"] < 0 else "#111111"
+        rd_bg = "#f8d7da" if r["rate_diff"] < 0 else row_bg
+        rd_col = "#b91c1c" if r["rate_diff"] < 0 else "#111111"
+
+        pct_fmt = "{:,.1f}%" if is_summary else "{:,.0f}%"
+        force_dec = not is_summary
+
+        if is_summary:
+            left_tds = f"<td style='background:{row_bg}; font-weight:{fw};'>{r['구분']}</td>"
+        else:
+            left_tds = (
+                f"<td style='background:{row_bg};'>{r['구분']}</td>"
+                f"<td style='background:{row_bg}; font-weight:700;'>{r['과제명']}</td>"
+                f"<td style='background:{row_bg}; color:#374151;'>{r['모델명']}</td>"
+            )
+
+        body_html += f"""
+        <tr style="font-weight:{fw};">
+            {left_tds}
+            <td style="background:{row_bg};">{format_k(r['plan_qty'])}</td>
+            <td style="background:{row_bg};">{fmt_amt_ok(r['plan_amt'], always_decimal=force_dec)}</td>
+            <td style="background:{row_bg};">{format_k(r['target_qty'])}</td>
+            <td style="background:{row_bg};">{fmt_amt_ok(r['target_amt'], always_decimal=True)}</td>
+            <td style="background:{row_bg}; font-weight:800;">{format_k(r['act_qty'])}</td>
+            <td style="background:{row_bg}; font-weight:800;">{fmt_amt_ok(r['act_amt'], always_decimal=force_dec)}</td>
+            <td style="background:{dq_bg}; color:{dq_col}; font-weight:800;">{fmt_signed_k(r['diff_qty'])}</td>
+            <td style="background:{da_bg}; color:{da_col}; font-weight:800;">{fmt_amt_ok(r['diff_amt'], always_decimal=force_dec)}</td>
+            <td style="background:{row_bg};">{pct_fmt.format(r['rate_target'])}</td>
+            <td style="background:{row_bg}; font-weight:800;">{pct_fmt.format(r['rate_act'])}</td>
+            <td style="background:{rd_bg}; color:{rd_col}; font-weight:800;">{pct_fmt.format(r['rate_diff'])}</td>
+        </tr>
+        """
+
+    html = f"""
+    <div style="overflow-x:auto; margin-bottom:18px; border:2.5px solid #111111; box-shadow:5px 5px 0px #0044ff; border-radius:4px;">
+        <table class="ship-rep-table" style="width:100%; border-collapse:collapse; font-size:13px; text-align:center; background:#ffffff;">
+            <thead>
+                <tr style="background:#24476e; color:#ffffff; font-weight:800;">
+                    {left_headers}
+                    <th colspan="2" style="padding:8px; border:1px solid #111;">{month_lbl} 계획</th>
+                    <th colspan="2" style="padding:8px; border:1px solid #111;">목표{ref_suffix}</th>
+                    <th colspan="2" style="padding:8px; border:1px solid #111;">실적{ref_suffix}</th>
+                    <th colspan="2" style="padding:8px; border:1px solid #111;">목표 대비 차이</th>
+                    <th colspan="2" style="padding:8px; border:1px solid #111;">진도율</th>
+                    <th rowspan="2" style="padding:8px; border:1px solid #111;">차이</th>
+                </tr>
+                <tr style="background:#2d5986; color:#ffffff; font-weight:700; font-size:12px;">
+                    <th style="padding:6px; border:1px solid #111;">수량</th><th style="padding:6px; border:1px solid #111;">금액</th>
+                    <th style="padding:6px; border:1px solid #111;">수량</th><th style="padding:6px; border:1px solid #111;">금액</th>
+                    <th style="padding:6px; border:1px solid #111;">수량</th><th style="padding:6px; border:1px solid #111;">금액</th>
+                    <th style="padding:6px; border:1px solid #111;">수량</th><th style="padding:6px; border:1px solid #111;">금액</th>
+                    <th style="padding:6px; border:1px solid #111;">목표</th><th style="padding:6px; border:1px solid #111;">실적</th>
+                </tr>
+            </thead>
+            <tbody>
+                {body_html}
+            </tbody>
+        </table>
+    </div>
+    """
+    render_html(html)
+
+
 def _render_day_detail_body(d_num, m_num, y_num, d_info, act_info, show_actual_mode):
     plan_items = d_info.get("items", [])
     plan_q = d_info.get("total", 0)
@@ -549,7 +645,7 @@ if hasattr(st, "dialog"):
         _render_day_detail_body(d_num, m_num, y_num, d_info, act_info, show_actual_mode)
 
 
-# 5. 엑셀 파싱 엔진 (거점 통합·다년도·기간별 집계 반영)
+# 5. 엑셀 파싱 엔진
 def parse_mapping_excel(file_src):
     try:
         df_temp = pd.read_excel(file_src, header=None)
@@ -627,7 +723,6 @@ def parse_production_excel(file_src, target_date_str):
     summary_sheet_name = next((s for s in wb.sheetnames if "요약" in s), wb.sheetnames[0])
     sheet = wb[summary_sheet_name]
 
-    # 완제품 재고 추출 (전체/합계 열 우선 선택)
     for r in range(1, 35):
         row_joined = "".join([str(safe_cell(sheet, r, c) or "") for c in range(1, 10)]).replace(" ", "")
         if "당일완제품재고" in row_joined:
@@ -678,7 +773,7 @@ def parse_production_excel(file_src, target_date_str):
                 if m:
                     parsed["monthly_months"] = [m.group(1)]
 
-    # 베트남 / 한국 / 해외 구분 행이 존재하더라도 전체 통합(TOTAL/합계 우선, 없으면 거점 합산)으로 처리
+    # 전체 통합 기준 행 선택 (전체/합계 행 우선, 없을 경우 거점 행 합산)
     total_plan_rows, total_act_rows = [], []
     all_plan_rows, all_act_rows = [], []
     curr_group = ""
@@ -764,7 +859,6 @@ def parse_production_excel(file_src, target_date_str):
     parsed["weekly_plan"] = wp if wp else [0] * len(parsed["weekly_labels"])
     parsed["weekly_actual"] = wa if wa else [0] * len(parsed["weekly_labels"])
 
-    # 조회일 기준 해당 주차 합계만 산출
     week_plan_map = dict(zip(parsed["weekly_labels"], parsed["weekly_plan"]))
     week_act_map = dict(zip(parsed["weekly_labels"], parsed["weekly_actual"]))
 
@@ -826,6 +920,287 @@ def parse_production_excel(file_src, target_date_str):
     return parsed
 
 
+# 5-1. 신규 출하 실적 양식(요약표 + 과제/모델별 진도율 상세표) 파싱 엔진
+def is_summary_shipment_workbook(file_src):
+    try:
+        wb = openpyxl.load_workbook(file_src, data_only=True)
+        for s_name in wb.sheetnames:
+            ws = wb[s_name]
+            sample_txt = ""
+            for r in range(1, min(25, ws.max_row + 1)):
+                for c in range(1, min(18, ws.max_column + 1)):
+                    sample_txt += str(safe_cell(ws, r, c) or "").replace(" ", "")
+            if "진도율" in sample_txt and ("과제명" in sample_txt or "목표대비" in sample_txt):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _extract_header_col_map(sheet, hdr_r):
+    col_map = {}
+    carried_top = ""
+    month_label = ""
+    ref_date_label = ""
+
+    for c in range(1, sheet.max_column + 1):
+        raw_top = str(safe_cell(sheet, hdr_r, c) or "").strip()
+        raw_sub = str(safe_cell(sheet, hdr_r + 1, c) or "").strip()
+
+        if not raw_top and not raw_sub and "plan_qty" in col_map:
+            continue
+
+        if raw_top:
+            carried_top = raw_top
+            m_mon = re.search(r"(\d{1,2}\s*월)", raw_top)
+            if m_mon and not month_label:
+                month_label = m_mon.group(1).replace(" ", "")
+            m_ref = re.search(r"~\s*([0-9]{1,2}\s*[-/.]\s*[0-9]{1,2})", raw_top)
+            if m_ref and not ref_date_label:
+                ref_date_label = m_ref.group(1).replace(" ", "")
+
+        top_clean = carried_top.replace(" ", "")
+        sub_clean = raw_sub.replace(" ", "")
+
+        if "구분" in top_clean:
+            col_map.setdefault("gubun", c)
+        elif "과제" in top_clean:
+            col_map.setdefault("project", c)
+        elif "모델" in top_clean:
+            col_map.setdefault("model", c)
+        elif "계획" in top_clean and "대비" not in top_clean:
+            if "수량" in sub_clean:
+                col_map.setdefault("plan_qty", c)
+            elif "금액" in sub_clean:
+                col_map.setdefault("plan_amt", c)
+        elif "대비" in top_clean:
+            if "수량" in sub_clean:
+                col_map.setdefault("diff_qty", c)
+            elif "금액" in sub_clean:
+                col_map.setdefault("diff_amt", c)
+        elif "목표" in top_clean and "진도율" not in top_clean:
+            if "수량" in sub_clean:
+                col_map.setdefault("target_qty", c)
+            elif "금액" in sub_clean:
+                col_map.setdefault("target_amt", c)
+        elif "진도율" in top_clean:
+            if "목표" in sub_clean:
+                col_map.setdefault("rate_target", c)
+            elif "실적" in sub_clean:
+                col_map.setdefault("rate_act", c)
+        elif "실적" in top_clean:
+            if "수량" in sub_clean:
+                col_map.setdefault("act_qty", c)
+            elif "금액" in sub_clean:
+                col_map.setdefault("act_amt", c)
+        elif top_clean == "차이" and sub_clean in ("", "차이"):
+            col_map.setdefault("rate_diff", c)
+
+    return col_map, month_label, ref_date_label
+
+
+def parse_shipment_summary_excel(file_src):
+    wb = openpyxl.load_workbook(file_src, data_only=True)
+    target_ws = wb.active
+    for s_name in wb.sheetnames:
+        ws = wb[s_name]
+        txt = "".join(
+            str(safe_cell(ws, r, c) or "")
+            for r in range(1, min(25, ws.max_row + 1))
+            for c in range(1, min(18, ws.max_column + 1))
+        ).replace(" ", "")
+        if "진도율" in txt and ("과제명" in txt or "모델명" in txt):
+            target_ws = ws
+            break
+
+    summary_hdr_r, detail_hdr_r = None, None
+    for r in range(1, min(40, target_ws.max_row + 1)):
+        row_str = "".join(str(safe_cell(target_ws, r, c) or "") for c in range(1, 18)).replace(" ", "")
+        if ("과제명" in row_str or "모델명" in row_str) and ("계획" in row_str or "실적" in row_str):
+            detail_hdr_r = r
+            break
+        if "구분" in row_str and "진도율" in row_str and summary_hdr_r is None:
+            summary_hdr_r = r
+
+    sample_qtys, sample_amts, sample_pcts = [], [], []
+    active_hdr = detail_hdr_r or summary_hdr_r or 1
+    probe_map, _, _ = _extract_header_col_map(target_ws, active_hdr)
+
+    for r in range((summary_hdr_r or active_hdr) + 2, target_ws.max_row + 1):
+        if detail_hdr_r and r in (detail_hdr_r, detail_hdr_r + 1):
+            continue
+        for q_k in ("plan_qty", "target_qty", "act_qty"):
+            c_idx = probe_map.get(q_k)
+            v = safe_cell(target_ws, r, c_idx) if c_idx else None
+            if isinstance(v, (int, float)) and v > 0:
+                sample_qtys.append(abs(float(v)))
+        for a_k in ("plan_amt", "target_amt", "act_amt"):
+            c_idx = probe_map.get(a_k)
+            v = safe_cell(target_ws, r, c_idx) if c_idx else None
+            if isinstance(v, (int, float)) and v > 0:
+                sample_amts.append(abs(float(v)))
+        for p_k in ("rate_target", "rate_act"):
+            c_idx = probe_map.get(p_k)
+            v = safe_cell(target_ws, r, c_idx) if c_idx else None
+            if isinstance(v, (int, float)) and v != 0:
+                sample_pcts.append(abs(float(v)))
+
+    qty_is_k_unit = (max(sample_qtys) < 100_000) if sample_qtys else True
+    max_amt = max(sample_amts) if sample_amts else 0
+    amt_divisor = 100_000_000.0 if max_amt >= 100_000_000 else (100_000.0 if max_amt >= 100_000 else 1.0)
+    pct_is_ratio = (max(sample_pcts) <= 5.0) if sample_pcts else True
+
+    def read_qty_pieces(r, c, allow_none=False):
+        if not c:
+            return None if allow_none else 0
+        cell = target_ws.cell(r, c)
+        val = cell.value
+        if val is None:
+            return None if allow_none else 0
+        if isinstance(val, str):
+            if val.strip() in ("", "-"):
+                return 0
+            s = val.upper().replace(",", "").replace(" ", "")
+            mult = 1000.0 if ("K" in s or "천" in s) else (1000.0 if qty_is_k_unit else 1.0)
+            s_num = re.sub(r"[^0-9.\-]", "", s)
+            return int(round(float(s_num) * mult)) if s_num not in ("", "-", ".") else 0
+        fmt = str(cell.number_format or "").replace('"', "")
+        if re.search(r"[0#],K", fmt) or fmt.endswith(","):
+            return int(round(float(val)))
+        return int(round(float(val) * (1000.0 if qty_is_k_unit else 1.0)))
+
+    def read_amt_ok(r, c, allow_none=False):
+        if not c:
+            return None if allow_none else 0.0
+        cell = target_ws.cell(r, c)
+        val = cell.value
+        if val is None:
+            return None if allow_none else 0.0
+        if isinstance(val, str):
+            if val.strip() in ("", "-"):
+                return 0.0
+            s = val.replace(",", "").replace("억원", "").replace("억", "").replace(" ", "")
+            s_num = re.sub(r"[^0-9.\-]", "", s)
+            return round(float(s_num), 2) if s_num not in ("", "-", ".") else 0.0
+        return round(float(val) / amt_divisor, 2)
+
+    def read_pct(r, c, allow_none=False):
+        if not c:
+            return None if allow_none else 0.0
+        cell = target_ws.cell(r, c)
+        val = cell.value
+        if val is None:
+            return None if allow_none else 0.0
+        if isinstance(val, str):
+            if val.strip() in ("", "-"):
+                return 0.0
+            s_num = re.sub(r"[^0-9.\-]", "", val.replace(",", ""))
+            return round(float(s_num), 1) if s_num not in ("", "-", ".") else 0.0
+        fmt = str(cell.number_format or "")
+        if "%" in fmt or pct_is_ratio:
+            return round(float(val) * 100.0, 1)
+        return round(float(val), 1)
+
+    def parse_row_metrics(r, cmap):
+        p_q = read_qty_pieces(r, cmap.get("plan_qty"))
+        p_a = read_amt_ok(r, cmap.get("plan_amt"))
+        t_q = read_qty_pieces(r, cmap.get("target_qty"))
+        t_a = read_amt_ok(r, cmap.get("target_amt"))
+        a_q = read_qty_pieces(r, cmap.get("act_qty"))
+        a_a = read_amt_ok(r, cmap.get("act_amt"))
+
+        d_q = read_qty_pieces(r, cmap.get("diff_qty"), allow_none=True)
+        if d_q is None:
+            d_q = a_q - t_q
+
+        d_a = read_amt_ok(r, cmap.get("diff_amt"), allow_none=True)
+        if d_a is None:
+            d_a = round(a_a - t_a, 2)
+
+        r_t = read_pct(r, cmap.get("rate_target"), allow_none=True)
+        if r_t is None:
+            r_t = round(t_q / p_q * 100.0, 1) if p_q > 0 else 0.0
+
+        r_a = read_pct(r, cmap.get("rate_act"), allow_none=True)
+        if r_a is None:
+            r_a = round(a_q / p_q * 100.0, 1) if p_q > 0 else 0.0
+
+        r_d = read_pct(r, cmap.get("rate_diff"), allow_none=True)
+        if r_d is None:
+            r_d = round(r_a - r_t, 1)
+
+        return {
+            "plan_qty": p_q,
+            "plan_amt": p_a,
+            "target_qty": t_q,
+            "target_amt": t_a,
+            "act_qty": a_q,
+            "act_amt": a_a,
+            "diff_qty": d_q,
+            "diff_amt": d_a,
+            "rate_target": r_t,
+            "rate_act": r_a,
+            "rate_diff": r_d,
+        }
+
+    month_lbl, ref_date_lbl = "", ""
+    summary_rows = []
+    if summary_hdr_r:
+        s_map, m_l, r_l = _extract_header_col_map(target_ws, summary_hdr_r)
+        month_lbl = m_l or month_lbl
+        ref_date_lbl = r_l or ref_date_lbl
+        end_s = (detail_hdr_r - 1) if detail_hdr_r else min(summary_hdr_r + 10, target_ws.max_row)
+        start_lbl_c = s_map.get("gubun", 1)
+        end_lbl_c = max(start_lbl_c + 1, s_map.get("plan_qty", 4))
+
+        for r in range(summary_hdr_r + 2, end_s + 1):
+            lbl = ""
+            for c_chk in range(start_lbl_c, end_lbl_c):
+                v_chk = str(safe_cell(target_ws, r, c_chk) or "").strip()
+                if v_chk:
+                    lbl = v_chk
+                    break
+            if not lbl:
+                continue
+            item = {"구분": lbl}
+            item.update(parse_row_metrics(r, s_map))
+            summary_rows.append(item)
+
+    detail_rows = []
+    if detail_hdr_r:
+        d_map, m_l2, r_l2 = _extract_header_col_map(target_ws, detail_hdr_r)
+        month_lbl = month_lbl or m_l2
+        ref_date_lbl = ref_date_lbl or r_l2
+        curr_gubun = ""
+        for r in range(detail_hdr_r + 2, target_ws.max_row + 1):
+            raw_g = str(safe_cell(target_ws, r, d_map.get("gubun", 1)) or "").strip()
+            proj = str(safe_cell(target_ws, r, d_map.get("project", 2)) or "").strip()
+            mdl = str(safe_cell(target_ws, r, d_map.get("model", 3)) or "").strip()
+
+            if raw_g:
+                curr_gubun = raw_g
+            if not proj and not mdl:
+                continue
+            if any(k in f"{raw_g}{proj}{mdl}".upper() for k in ["합계", "총계", "소계", "TOTAL"]):
+                continue
+
+            item = {
+                "구분": curr_gubun,
+                "과제명": proj or mdl,
+                "모델명": mdl or proj,
+            }
+            item.update(parse_row_metrics(r, d_map))
+            detail_rows.append(item)
+
+    return {
+        "month_label": month_lbl or "당월",
+        "ref_date_label": ref_date_lbl,
+        "summary_rows": summary_rows,
+        "detail_rows": detail_rows,
+    }
+
+
+# 5-2. 기존 일별 출하 실적 파일 호환 파서
 def _parse_single_shipment_sheet(sheet, sheet_year, sheet_month, target_date_obj, mapping_data):
     gh_col, model_col, site_col, gubun_col = None, None, None, None
     header_row = 1
@@ -889,9 +1264,7 @@ def _parse_single_shipment_sheet(sheet, sheet_year, sheet_month, target_date_obj
     weekly_ship_actual, weekly_rev_actual = {}, {}
     weekly_ship_by_isokey, weekly_rev_by_isokey = {}, {}
     monthly_ship_actual, monthly_rev_actual = 0, 0.0
-
     model_period = {"daily": {}, "weekly": {}, "monthly": {}}
-    site_period = {"daily": {}, "weekly": {}, "monthly": {}}
 
     learned_prices, learned_suffix_prices, learned_model_prices = {}, {}, {}
     total_carryover_krw = 0.0
@@ -989,20 +1362,11 @@ def _parse_single_shipment_sheet(sheet, sheet_year, sheet_month, target_date_obj
                             m_rec = model_period["monthly"].setdefault(base_model, {"Actual": 0, "Rev_Act": 0.0})
                             m_rec["Actual"] += q_val
                             m_rec["Rev_Act"] += rev_ok
-                        if curr_site:
-                            s_rec = site_period["monthly"].setdefault(curr_site, {"Actual": 0, "Rev_Act": 0.0})
-                            s_rec["Actual"] += q_val
-                            s_rec["Rev_Act"] += rev_ok
 
-                    if w_key == target_iso_key:
-                        if base_model:
-                            mw_rec = model_period["weekly"].setdefault(base_model, {"Actual": 0, "Rev_Act": 0.0})
-                            mw_rec["Actual"] += q_val
-                            mw_rec["Rev_Act"] += rev_ok
-                        if curr_site:
-                            sw_rec = site_period["weekly"].setdefault(curr_site, {"Actual": 0, "Rev_Act": 0.0})
-                            sw_rec["Actual"] += q_val
-                            sw_rec["Rev_Act"] += rev_ok
+                    if w_key == target_iso_key and base_model:
+                        mw_rec = model_period["weekly"].setdefault(base_model, {"Actual": 0, "Rev_Act": 0.0})
+                        mw_rec["Actual"] += q_val
+                        mw_rec["Rev_Act"] += rev_ok
 
                 if d_obj == target_date_obj:
                     daily_ship_a += q_val
@@ -1011,10 +1375,6 @@ def _parse_single_shipment_sheet(sheet, sheet_year, sheet_month, target_date_obj
                         md_rec = model_period["daily"].setdefault(base_model, {"Actual": 0, "Rev_Act": 0.0})
                         md_rec["Actual"] += q_val
                         md_rec["Rev_Act"] += rev_ok
-                    if curr_site:
-                        sd_rec = site_period["daily"].setdefault(curr_site, {"Actual": 0, "Rev_Act": 0.0})
-                        sd_rec["Actual"] += q_val
-                        sd_rec["Rev_Act"] += rev_ok
 
     if total_carryover_krw == 0:
         for r in range(max(1, sheet.max_row - 15), sheet.max_row + 1):
@@ -1050,7 +1410,6 @@ def _parse_single_shipment_sheet(sheet, sheet_year, sheet_month, target_date_obj
         "monthly_ship_actual": monthly_ship_actual,
         "monthly_rev_actual": round(monthly_rev_actual, 2),
         "model_period": model_period,
-        "site_period": site_period,
     }
 
 
@@ -1065,7 +1424,6 @@ def parse_new_shipment_actual_excel(file_src, target_date_str, mapping_data):
     target_date_obj = datetime.date(t_y, t_m, t_d)
     target_iso_key = get_iso_week_key(target_date_obj)
 
-    # 기준월 시트 우선 선택 및 통합 내 다른 월 시트도 함께 감지
     candidate_sheets = []
     for s_name in wb.sheetnames:
         m_mon = re.search(r"(\d{1,2})\s*월", s_name)
@@ -1087,7 +1445,7 @@ def parse_new_shipment_actual_excel(file_src, target_date_str, mapping_data):
     combined_date_actual = {}
     loaded_yms = []
     total_weekly_ship_iso, total_weekly_rev_iso = {}, {}
-    merged_weekly_model, merged_weekly_site = {}, {}
+    merged_weekly_model = {}
 
     target_res = None
     for s_name, s_y, s_m in candidate_sheets:
@@ -1105,17 +1463,10 @@ def parse_new_shipment_actual_excel(file_src, target_date_str, mapping_data):
             rec["Actual"] += vals["Actual"]
             rec["Rev_Act"] += vals["Rev_Act"]
 
-        for ste, vals in res["site_period"]["weekly"].items():
-            rec = merged_weekly_site.setdefault(ste, {"Actual": 0, "Rev_Act": 0.0})
-            rec["Actual"] += vals["Actual"]
-            rec["Rev_Act"] += vals["Rev_Act"]
-
         if res["is_target_month"] and target_res is None:
             target_res = res
 
     if target_res is None:
-        empty_period = {"daily": {}, "weekly": merged_weekly_model, "monthly": {}}
-        empty_site_p = {"daily": {}, "weekly": merged_weekly_site, "monthly": {}}
         return {
             "daily_ship_a": 0,
             "daily_rev_a": 0.0,
@@ -1128,12 +1479,10 @@ def parse_new_shipment_actual_excel(file_src, target_date_str, mapping_data):
             "weekly_rev_actual": {},
             "monthly_ship_actual": 0,
             "monthly_rev_actual": 0.0,
-            "actual_by_model_period": empty_period,
-            "actual_by_site_period": empty_site_p,
+            "actual_by_model_period": {"daily": {}, "weekly": merged_weekly_model, "monthly": {}},
         }
 
     target_res["model_period"]["weekly"] = merged_weekly_model
-    target_res["site_period"]["weekly"] = merged_weekly_site
 
     return {
         "daily_ship_a": target_res["daily_ship_a"],
@@ -1148,10 +1497,10 @@ def parse_new_shipment_actual_excel(file_src, target_date_str, mapping_data):
         "monthly_ship_actual": target_res["monthly_ship_actual"],
         "monthly_rev_actual": target_res["monthly_rev_actual"],
         "actual_by_model_period": target_res["model_period"],
-        "actual_by_site_period": target_res["site_period"],
     }
 
 
+# 5-3. RTF Main 출하 계획(FCST) 파싱 엔진
 def parse_rtf_main_plan_excel(file_src, target_date_str, mapping_data, exchange_rate=1350.0):
     wb = openpyxl.load_workbook(file_src, data_only=True)
     sheet = wb["Main"] if "Main" in wb.sheetnames else wb.active
@@ -1179,7 +1528,6 @@ def parse_rtf_main_plan_excel(file_src, target_date_str, mapping_data, exchange_
                     if m_dt:
                         raw_date_headers.append((c, "md", (int(m_dt.group(1)), int(m_dt.group(2)))))
 
-    # 연말연시(12월 -> 1월) 문자열 날짜 헤더 연도 자동 이월 추적
     date_cols = []
     running_year = None
     prev_month = None
@@ -1251,7 +1599,6 @@ def parse_rtf_main_plan_excel(file_src, target_date_str, mapping_data, exchange_
     monthly_ship_by_ym, monthly_rev_by_ym = {}, {}
 
     plan_by_model_period = {"daily": {}, "weekly": {}, "monthly": {}}
-    plan_by_site_period = {"daily": {}, "weekly": {}, "monthly": {}}
     fcst_rows = []
 
     for r in range(5, sheet.max_row + 1):
@@ -1320,23 +1667,14 @@ def parse_rtf_main_plan_excel(file_src, target_date_str, mapping_data, exchange_
                     mm = plan_by_model_period["monthly"].setdefault(model_name, {"Plan_Qty": 0, "Plan_Rev": 0.0})
                     mm["Plan_Qty"] += q_val
                     mm["Plan_Rev"] += rev_val
-                if site:
-                    sm = plan_by_site_period["monthly"].setdefault(site, {"Plan_Qty": 0, "Plan_Rev": 0.0})
-                    sm["Plan_Qty"] += q_val
-                    sm["Plan_Rev"] += rev_val
 
             monthly_ship_by_ym[ym_key] = monthly_ship_by_ym.get(ym_key, 0) + q_val
             monthly_rev_by_ym[ym_key] = monthly_rev_by_ym.get(ym_key, 0.0) + rev_val
 
-            if w_key == target_iso_key:
-                if model_name:
-                    mw = plan_by_model_period["weekly"].setdefault(model_name, {"Plan_Qty": 0, "Plan_Rev": 0.0})
-                    mw["Plan_Qty"] += q_val
-                    mw["Plan_Rev"] += rev_val
-                if site:
-                    sw = plan_by_site_period["weekly"].setdefault(site, {"Plan_Qty": 0, "Plan_Rev": 0.0})
-                    sw["Plan_Qty"] += q_val
-                    sw["Plan_Rev"] += rev_val
+            if w_key == target_iso_key and model_name:
+                mw = plan_by_model_period["weekly"].setdefault(model_name, {"Plan_Qty": 0, "Plan_Rev": 0.0})
+                mw["Plan_Qty"] += q_val
+                mw["Plan_Rev"] += rev_val
 
             if d_obj == target_date_obj:
                 daily_ship_p += q_val
@@ -1345,17 +1683,11 @@ def parse_rtf_main_plan_excel(file_src, target_date_str, mapping_data, exchange_
                     md = plan_by_model_period["daily"].setdefault(model_name, {"Plan_Qty": 0, "Plan_Rev": 0.0})
                     md["Plan_Qty"] += q_val
                     md["Plan_Rev"] += rev_val
-                if site:
-                    sd = plan_by_site_period["daily"].setdefault(site, {"Plan_Qty": 0, "Plan_Rev": 0.0})
-                    sd["Plan_Qty"] += q_val
-                    sd["Plan_Rev"] += rev_val
 
         row_fcst["합계"] = row_fcst_total
         if row_fcst_total > 0:
             fcst_rows.append(row_fcst)
 
-    # 당월 차트용 주차 계획: 해당 주차 전체 계획(월 경계 포함 시 ISO 주차 기준 우선)
-    month_weeks = get_month_iso_weeks(t_y, t_m)
     weekly_ship_plan_for_chart = {}
     weekly_rev_plan_for_chart = {}
     for d in range(1, calendar.monthrange(t_y, t_m)[1] + 1):
@@ -1377,9 +1709,7 @@ def parse_rtf_main_plan_excel(file_src, target_date_str, mapping_data, exchange_
         "cur_month_rev_p": round(monthly_rev_by_ym.get(target_month_key, 0.0), 2),
         "weekly_ship_plan": weekly_ship_plan_for_chart,
         "weekly_rev_plan": weekly_rev_plan_for_chart,
-        "month_weeks": month_weeks,
         "plan_by_model_period": plan_by_model_period,
-        "plan_by_site_period": plan_by_site_period,
         "fcst_rows": fcst_rows,
         "fcst_date_cols": fcst_date_cols,
     }
@@ -1485,63 +1815,105 @@ def run_dashboard_pipeline(target_date_input, ex_rate_input, uploaded_files):
     active_week_lbl = st.session_state.get("cur_week_label", target_iso_week)
 
     actual_model_period = {"daily": {}, "weekly": {}, "monthly": {}}
-    actual_site_period = {"daily": {}, "weekly": {}, "monthly": {}}
     plan_model_period = {"daily": {}, "weekly": {}, "monthly": {}}
-    plan_site_period = {"daily": {}, "weekly": {}, "monthly": {}}
+    used_summary_shipment = False
 
-    # 3. 출하 실적 반영 (주간 KPI는 조회 기준 주차만 반영, 캘린더용 YYYY-MM-DD 누적 보관)
+    # 3. 출하 실적 반영 (신규 요약/진도율 양식 & 기존 일별 양식 자동 판별)
     if os.path.exists(CACHED_EXCEL_PATHS["ship_actual"]):
         try:
-            s_act = parse_new_shipment_actual_excel(
-                CACHED_EXCEL_PATHS["ship_actual"], target_date_input, st.session_state["mapping_data"]
-            )
-            carryover = s_act["carryover_rev_ok"]
+            if is_summary_shipment_workbook(CACHED_EXCEL_PATHS["ship_actual"]):
+                used_summary_shipment = True
+                rep = parse_shipment_summary_excel(CACHED_EXCEL_PATHS["ship_actual"])
+                st.session_state["shipment_report"] = rep
 
-            st.session_state["actual_by_date"].update(s_act["date_actual_map"])
-            existing_yms = set(st.session_state.get("actual_months_loaded", []))
-            existing_yms.update(s_act["loaded_yms"])
-            st.session_state["actual_months_loaded"] = sorted(list(existing_yms))
+                if rep["summary_rows"]:
+                    main_sum = rep["summary_rows"][-1]
+                    st.session_state["kpi_data"]["monthly"]["ship_p"] = main_sum["plan_qty"]
+                    st.session_state["kpi_data"]["monthly"]["ship_a"] = main_sum["act_qty"]
+                    st.session_state["kpi_data"]["monthly"]["rev_p"] = main_sum["plan_amt"]
+                    st.session_state["kpi_data"]["monthly"]["rev_a"] = main_sum["act_amt"]
+                    st.session_state["kpi_data"]["monthly"]["pure_rev_a"] = main_sum["act_amt"]
+                    st.session_state["kpi_data"]["monthly"]["carryover_rev"] = 0.0
+                    st.session_state["chart_data"]["monthly_ship_p"] = [main_sum["plan_qty"]]
+                    st.session_state["chart_data"]["monthly_ship_a"] = [main_sum["act_qty"]]
+                    st.session_state["chart_data"]["monthly_rev_p"] = [main_sum["plan_amt"]]
+                    st.session_state["chart_data"]["monthly_rev_a"] = [main_sum["act_amt"]]
+                elif rep["detail_rows"]:
+                    tot_p_q = sum(r["plan_qty"] for r in rep["detail_rows"])
+                    tot_a_q = sum(r["act_qty"] for r in rep["detail_rows"])
+                    tot_p_a = round(sum(r["plan_amt"] for r in rep["detail_rows"]), 2)
+                    tot_a_a = round(sum(r["act_amt"] for r in rep["detail_rows"]), 2)
+                    st.session_state["kpi_data"]["monthly"]["ship_p"] = tot_p_q
+                    st.session_state["kpi_data"]["monthly"]["ship_a"] = tot_a_q
+                    st.session_state["kpi_data"]["monthly"]["rev_p"] = tot_p_a
+                    st.session_state["kpi_data"]["monthly"]["rev_a"] = tot_a_a
+                    st.session_state["kpi_data"]["monthly"]["pure_rev_a"] = tot_a_a
+                    st.session_state["kpi_data"]["monthly"]["carryover_rev"] = 0.0
+                    st.session_state["chart_data"]["monthly_ship_p"] = [tot_p_q]
+                    st.session_state["chart_data"]["monthly_ship_a"] = [tot_a_q]
+                    st.session_state["chart_data"]["monthly_rev_p"] = [tot_p_a]
+                    st.session_state["chart_data"]["monthly_rev_a"] = [tot_a_a]
 
-            st.session_state["kpi_data"]["daily"]["ship_a"] = s_act["daily_ship_a"]
-            st.session_state["kpi_data"]["daily"]["rev_a"] = s_act["daily_rev_a"]
-
-            w_ship_a = [s_act["weekly_ship_actual"].get(w, 0) for w in w_labels]
-            w_rev_a = []
-            for idx, w in enumerate(w_labels):
-                pure_w = s_act["weekly_rev_actual"].get(w, 0.0)
-                w_rev_a.append(round(pure_w + carryover, 2) if idx == 0 else round(pure_w, 2))
-
-            st.session_state["chart_data"]["weekly_ship_a"] = w_ship_a
-            st.session_state["chart_data"]["weekly_rev_a"] = w_rev_a
-
-            # 조회일이 월 첫 주차(w_labels[0])일 때만 해당 주차 KPI에 전월 이월 가산
-            cur_w_pure_rev = s_act["cur_week_pure_rev_a"]
-            cur_w_carryover = carryover if (w_labels and active_week_lbl == w_labels[0]) else 0.0
-
-            st.session_state["kpi_data"]["weekly"]["ship_a"] = s_act["cur_week_ship_a"]
-            st.session_state["kpi_data"]["weekly"]["pure_rev_a"] = cur_w_pure_rev
-            st.session_state["kpi_data"]["weekly"]["carryover_rev"] = cur_w_carryover
-            st.session_state["kpi_data"]["weekly"]["month_carryover_total"] = carryover
-            st.session_state["kpi_data"]["weekly"]["rev_a"] = round(cur_w_pure_rev + cur_w_carryover, 2)
-
-            pure_monthly_rev = s_act["monthly_rev_actual"]
-            st.session_state["kpi_data"]["monthly"]["ship_a"] = s_act["monthly_ship_actual"]
-            st.session_state["kpi_data"]["monthly"]["pure_rev_a"] = pure_monthly_rev
-            st.session_state["kpi_data"]["monthly"]["carryover_rev"] = carryover
-            st.session_state["kpi_data"]["monthly"]["rev_a"] = round(pure_monthly_rev + carryover, 2)
-
-            st.session_state["chart_data"]["monthly_ship_a"] = [s_act["monthly_ship_actual"]]
-            st.session_state["chart_data"]["monthly_rev_a"] = [round(pure_monthly_rev + carryover, 2)]
-
-            actual_model_period = s_act["actual_by_model_period"]
-            actual_site_period = s_act["actual_by_site_period"]
-            st.session_state["data_loaded"] = True
-            messages.append(
-                (
-                    "success",
-                    f"✅ 출하 실적 반영 완료 (일간: {format_k(s_act['daily_ship_a'])} | {active_week_lbl} 주간: {format_k(s_act['cur_week_ship_a'])} | 이월매출: {carryover:,.2f}억원)",
+                st.session_state["data_loaded"] = True
+                ref_note = f" | 기준 ~{rep['ref_date_label']}" if rep["ref_date_label"] else ""
+                messages.append(
+                    ("success", f"✅ 신규 출하 실적 반영 완료 ({rep['month_label']} 모델 {len(rep['detail_rows'])}건{ref_note})")
                 )
-            )
+            else:
+                st.session_state["shipment_report"] = {
+                    "month_label": "",
+                    "ref_date_label": "",
+                    "summary_rows": [],
+                    "detail_rows": [],
+                }
+                s_act = parse_new_shipment_actual_excel(
+                    CACHED_EXCEL_PATHS["ship_actual"], target_date_input, st.session_state["mapping_data"]
+                )
+                carryover = s_act["carryover_rev_ok"]
+
+                st.session_state["actual_by_date"].update(s_act["date_actual_map"])
+                existing_yms = set(st.session_state.get("actual_months_loaded", []))
+                existing_yms.update(s_act["loaded_yms"])
+                st.session_state["actual_months_loaded"] = sorted(list(existing_yms))
+
+                st.session_state["kpi_data"]["daily"]["ship_a"] = s_act["daily_ship_a"]
+                st.session_state["kpi_data"]["daily"]["rev_a"] = s_act["daily_rev_a"]
+
+                w_ship_a = [s_act["weekly_ship_actual"].get(w, 0) for w in w_labels]
+                w_rev_a = []
+                for idx, w in enumerate(w_labels):
+                    pure_w = s_act["weekly_rev_actual"].get(w, 0.0)
+                    w_rev_a.append(round(pure_w + carryover, 2) if idx == 0 else round(pure_w, 2))
+
+                st.session_state["chart_data"]["weekly_ship_a"] = w_ship_a
+                st.session_state["chart_data"]["weekly_rev_a"] = w_rev_a
+
+                cur_w_pure_rev = s_act["cur_week_pure_rev_a"]
+                cur_w_carryover = carryover if (w_labels and active_week_lbl == w_labels[0]) else 0.0
+
+                st.session_state["kpi_data"]["weekly"]["ship_a"] = s_act["cur_week_ship_a"]
+                st.session_state["kpi_data"]["weekly"]["pure_rev_a"] = cur_w_pure_rev
+                st.session_state["kpi_data"]["weekly"]["carryover_rev"] = cur_w_carryover
+                st.session_state["kpi_data"]["weekly"]["month_carryover_total"] = carryover
+                st.session_state["kpi_data"]["weekly"]["rev_a"] = round(cur_w_pure_rev + cur_w_carryover, 2)
+
+                pure_monthly_rev = s_act["monthly_rev_actual"]
+                st.session_state["kpi_data"]["monthly"]["ship_a"] = s_act["monthly_ship_actual"]
+                st.session_state["kpi_data"]["monthly"]["pure_rev_a"] = pure_monthly_rev
+                st.session_state["kpi_data"]["monthly"]["carryover_rev"] = carryover
+                st.session_state["kpi_data"]["monthly"]["rev_a"] = round(pure_monthly_rev + carryover, 2)
+
+                st.session_state["chart_data"]["monthly_ship_a"] = [s_act["monthly_ship_actual"]]
+                st.session_state["chart_data"]["monthly_rev_a"] = [round(pure_monthly_rev + carryover, 2)]
+
+                actual_model_period = s_act["actual_by_model_period"]
+                st.session_state["data_loaded"] = True
+                messages.append(
+                    (
+                        "success",
+                        f"✅ 출하 실적 반영 완료 (일간: {format_k(s_act['daily_ship_a'])} | {active_week_lbl} 주간: {format_k(s_act['cur_week_ship_a'])})",
+                    )
+                )
         except Exception as e:
             messages.append(("error", f"출하 실적 파싱 오류: {e}"))
 
@@ -1558,8 +1930,13 @@ def run_dashboard_pipeline(target_date_input, ex_rate_input, uploaded_files):
             st.session_state["kpi_data"]["daily"]["rev_p"] = s_plan["daily_rev_p"]
             st.session_state["kpi_data"]["weekly"]["ship_p"] = s_plan["cur_week_ship_p"]
             st.session_state["kpi_data"]["weekly"]["rev_p"] = s_plan["cur_week_rev_p"]
-            st.session_state["kpi_data"]["monthly"]["ship_p"] = s_plan["cur_month_ship_p"]
-            st.session_state["kpi_data"]["monthly"]["rev_p"] = s_plan["cur_month_rev_p"]
+
+            # 신규 출하실적 요약표에 당월 공식 계획이 없을 때만 RTF Main 월간 계획을 반영
+            if not used_summary_shipment or st.session_state["kpi_data"]["monthly"]["ship_p"] == 0:
+                st.session_state["kpi_data"]["monthly"]["ship_p"] = s_plan["cur_month_ship_p"]
+                st.session_state["kpi_data"]["monthly"]["rev_p"] = s_plan["cur_month_rev_p"]
+                st.session_state["chart_data"]["monthly_ship_p"] = [s_plan["cur_month_ship_p"]]
+                st.session_state["chart_data"]["monthly_rev_p"] = [s_plan["cur_month_rev_p"]]
 
             st.session_state["chart_data"]["weekly_ship_p"] = [
                 s_plan["weekly_ship_plan"].get(w, 0) for w in w_labels
@@ -1567,40 +1944,30 @@ def run_dashboard_pipeline(target_date_input, ex_rate_input, uploaded_files):
             st.session_state["chart_data"]["weekly_rev_p"] = [
                 s_plan["weekly_rev_plan"].get(w, 0.0) for w in w_labels
             ]
-            st.session_state["chart_data"]["monthly_ship_p"] = [s_plan["cur_month_ship_p"]]
-            st.session_state["chart_data"]["monthly_rev_p"] = [s_plan["cur_month_rev_p"]]
 
             st.session_state["fcst_data"] = {
                 "rows": s_plan.get("fcst_rows", []),
                 "date_cols": s_plan.get("fcst_date_cols", []),
             }
             plan_model_period = s_plan["plan_by_model_period"]
-            plan_site_period = s_plan["plan_by_site_period"]
             st.session_state["data_loaded"] = True
             messages.append(
                 (
                     "success",
-                    f"✅ 출하 & 매출 계획 반영 완료 (일간 계획: {format_k(s_plan['daily_ship_p'])} | {active_week_lbl} 주간 계획: {format_k(s_plan['cur_week_ship_p'])})",
+                    f"✅ 출하 & 매출 계획(FCST) 반영 완료 (일간 계획: {format_k(s_plan['daily_ship_p'])} | {active_week_lbl} 주간 계획: {format_k(s_plan['cur_week_ship_p'])})",
                 )
             )
         except Exception as e:
             messages.append(("error", f"출하 계획 파싱 오류: {e}"))
 
-    # 5. 모델별 / SITE별 기간별(일간·주간·월간) 통합 테이블 생성
+    # 5. 구양식 호환 모델별 기간별 병합 테이블 생성
     model_period_tables = {}
-    site_period_tables = {}
     for p_key in ["daily", "weekly", "monthly"]:
         model_period_tables[p_key] = _build_merged_table(
             plan_model_period.get(p_key, {}), actual_model_period.get(p_key, {}), "모델명"
         )
-        site_period_tables[p_key] = _build_merged_table(
-            plan_site_period.get(p_key, {}), actual_site_period.get(p_key, {}), "SITE"
-        )
-
     st.session_state["chart_data"]["ship_by_model_period"] = model_period_tables
-    st.session_state["chart_data"]["ship_by_site_period"] = site_period_tables
     st.session_state["chart_data"]["ship_by_model"] = model_period_tables["daily"]
-    st.session_state["chart_data"]["ship_by_site"] = site_period_tables["daily"]
 
     st.session_state["last_updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     save_state_to_disk()
@@ -1627,6 +1994,10 @@ render_html(
         font-size: 14px;
         margin-bottom: 18px;
         box-shadow: 4px 4px 0px #0044ff;
+    }
+    .ship-rep-table tbody td {
+        padding: 7px 8px;
+        border: 1px solid #d1d5db;
     }
     div[data-testid="stDialog"] div[role="dialog"] {
         max-width: 920px !important;
@@ -1670,7 +2041,7 @@ render_html(
 """
 )
 
-# 7. 사이드바
+# 7. 사이드바 (기존 순서 유지 및 SITE별 실적 제거)
 with st.sidebar:
     menu = st.radio(
         "📂 Folder",
@@ -1678,11 +2049,10 @@ with st.sidebar:
             "🏠 현황",
             "1. 모델별 출하실적",
             "2. 모델별 생산실적",
-            "3. 출하 SITE별 실적",
-            "4. 고객 FCST 조회",
-            "5. 완제품 재고 조회",
-            "6. 캘린더",
-            "7. 데이터 관리 (Admin)",
+            "3. 고객 FCST 조회",
+            "4. 완제품 재고 조회",
+            "5. 캘린더",
+            "6. 데이터 관리 (Admin)",
         ),
     )
 
@@ -1742,8 +2112,8 @@ def create_active_chart(title, categories, plan_data, actual_data, name1="계획
 
 
 # 8. 메인 메뉴 분기 로직
-if menu == "7. 데이터 관리 (Admin)":
-    st.title("⚙️ DATA MANAGEMENT")
+if menu == "6. 데이터 관리 (Admin)":
+    st.title("⚙️ 6. DATA MANAGEMENT (Admin)")
     if st.text_input("비밀번호", type="password") == "2250":
         saved_files_status = []
         for label_kr, slot_k in [
@@ -1780,7 +2150,7 @@ if menu == "7. 데이터 관리 (Admin)":
         with col1:
             prod_file = st.file_uploader("1. 생산 실적 파일", type=["xlsx"])
         with col2:
-            ship_actual_file = st.file_uploader("2. 출하 실적 파일 (신규 양식)", type=["xlsx"])
+            ship_actual_file = st.file_uploader("2. 출하 실적 파일 (요약/모델별 진도율 양식)", type=["xlsx"])
 
         col3, col4 = st.columns(2)
         with col3:
@@ -1839,7 +2209,7 @@ elif menu == "🏠 현황":
 
     tab_monthly, tab_weekly, tab_daily = st.tabs(["🗓️ Monthly", "📊 Weekly", "📅 Daily"])
 
-    # 1. Monthly 탭 (전체 통합)
+    # 1. Monthly 탭
     with tab_monthly:
         m1, m2, m3 = st.columns(3)
         with m1:
@@ -1849,7 +2219,12 @@ elif menu == "🏠 현황":
             render_kpi_card(f"{t_m}월 출하 누계 (전체)", "🚚", kpi["monthly"]["ship_a"], kpi["monthly"]["ship_p"])
             render_achievement_gauge("출하", kpi["monthly"]["ship_a"], kpi["monthly"]["ship_p"], unit="K")
         with m3:
-            rev_sub = f"당월 순실적 {kpi['monthly']['pure_rev_a']:,.2f}억 + 전월 이월 {kpi['monthly']['carryover_rev']:,.2f}억"
+            m_carry = kpi["monthly"].get("carryover_rev", 0.0)
+            rev_sub = (
+                f"당월 순실적 {kpi['monthly']['pure_rev_a']:,.2f}억 + 전월 이월 {m_carry:,.2f}억"
+                if m_carry > 0
+                else f"당월 누적 실적 {kpi['monthly']['rev_a']:,.2f}억원"
+            )
             render_kpi_card(
                 f"{t_m}월 매출 누계 (전체)", "💰", kpi["monthly"]["rev_a"], kpi["monthly"]["rev_p"], is_rev=True, sub_caption=rev_sub
             )
@@ -1873,7 +2248,7 @@ elif menu == "🏠 현황":
                 use_container_width=True,
             )
 
-    # 2. Weekly 탭 (조회일 기준 해당 주차 합계만 집계, 전체 통합)
+    # 2. Weekly 탭
     with tab_weekly:
         wk1, wk2, wk3 = st.columns(3)
         with wk1:
@@ -1936,7 +2311,7 @@ elif menu == "🏠 현황":
                 use_container_width=True,
             )
 
-    # 3. Daily 탭 (전체 통합)
+    # 3. Daily 탭
     with tab_daily:
         k1, k2, k3 = st.columns(3)
         with k1:
@@ -1967,79 +2342,249 @@ elif menu == "🏠 현황":
             )
 
 elif menu == "1. 모델별 출하실적":
-    st.subheader("📦 1. 모델별 출하 및 매출 현황 (계획 vs 실적)")
-    t_y, t_m, t_d = parse_target_ymd(st.session_state.get("target_date", default_target_date))
-    cur_w = st.session_state.get("cur_week_label", get_iso_week_label(datetime.date(t_y, t_m, t_d)))
+    rep = st.session_state.get("shipment_report", {})
+    sum_rows = rep.get("summary_rows", [])
+    det_rows = rep.get("detail_rows", [])
+    m_lbl = rep.get("month_label") or "당월"
+    ref_lbl = rep.get("ref_date_label") or ""
 
-    p_label_map = {
-        "daily": f"📅 일간 ({t_m}/{t_d} 당일)",
-        "weekly": f"📊 주간 ({cur_w} 해당 주차)",
-        "monthly": f"🗓️ 월간 ({t_m}월 누계)",
-    }
-    sel_period = st.radio(
-        "조회 집계 범위",
-        options=["daily", "weekly", "monthly"],
-        format_func=lambda x: p_label_map[x],
-        horizontal=True,
-    )
+    if sum_rows or det_rows:
+        title_ref = f" (기준: ~{ref_lbl})" if ref_lbl else ""
+        st.subheader(f"📦 1. 모델별 출하 및 매출 진도 현황{title_ref}")
 
-    period_dict = st.session_state["chart_data"].get("ship_by_model_period", {})
-    rows = period_dict.get(sel_period) if period_dict else st.session_state["chart_data"].get("ship_by_model", [])
-    df_ship = pd.DataFrame(rows or [])
+        # 1) 상단 전체 요약 테이블
+        if sum_rows:
+            st.markdown(f"##### 📌 {m_lbl} 전체 출하 · 매출 요약")
+            render_shipment_html_table(sum_rows, is_summary=True, month_lbl=m_lbl, ref_lbl=ref_lbl)
 
-    if not df_ship.empty:
-        df_ship = df_ship.sort_values("출하실적(개)", ascending=False)
+        # 2) 필터 및 모델별 비교 차트 + 상세 테이블
+        if det_rows:
+            df_det = pd.DataFrame(det_rows)
+            f_c1, f_c2, f_c3 = st.columns([1.2, 1.8, 1.0])
+            with f_c1:
+                gubun_opts = sorted(df_det["구분"].unique().tolist())
+                sel_gubun = st.multiselect("🏢 구분 필터", options=gubun_opts, default=[])
+            with f_c2:
+                proj_opts = df_det["과제명"].tolist()
+                sel_proj = st.multiselect("📱 과제명 필터", options=proj_opts, default=[])
+            with f_c3:
+                x_axis_col = st.radio("차트 X축 기준", ["과제명", "모델명"], horizontal=True)
 
-        tab_qty, tab_rev = st.tabs(["🚚 출하 수량 현황 (K)", "💰 매출액 현황 (억원)"])
-        with tab_qty:
-            st.plotly_chart(
-                create_active_chart(
-                    f"모델별 출하 수량 - {p_label_map[sel_period]}",
-                    df_ship["모델명"].tolist(),
-                    df_ship["출하계획(개)"].tolist(),
-                    df_ship["출하실적(개)"].tolist(),
-                    unit="K",
-                ),
-                use_container_width=True,
-            )
-        with tab_rev:
-            st.plotly_chart(
-                create_active_chart(
-                    f"모델별 매출액 - {p_label_map[sel_period]}",
-                    df_ship["모델명"].tolist(),
-                    df_ship["매출계획(억원)"].tolist(),
-                    df_ship["매출실적(억원)"].tolist(),
-                    unit="억원",
-                ),
-                use_container_width=True,
-            )
+            filtered_rows = [
+                r
+                for r in det_rows
+                if (not sel_gubun or r["구분"] in sel_gubun)
+                and (not sel_proj or r["과제명"] in sel_proj)
+            ]
 
-        col1, col2 = st.columns([0.8, 0.2])
-        with col2:
-            st.download_button(
-                label="📥 엑셀(CSV) 다운로드",
-                data=convert_df(df_ship),
-                file_name=f"model_shipment_{sel_period}.csv",
-                mime="text/csv",
-            )
-        st.dataframe(
-            df_ship[
-                [
-                    "모델명",
-                    "출하계획(K)",
-                    "출하실적(K)",
-                    "수량달성률(%)",
-                    "수량차질(K)",
-                    "매출계획(억원)",
-                    "매출실적(억원)",
-                    "매출달성률(%)",
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
+            if filtered_rows:
+                x_labels = [r[x_axis_col] for r in filtered_rows]
+                tab_q, tab_a, tab_r = st.tabs(
+                    [
+                        "🚚 모델별 수량 비교 (계획 vs 목표 vs 실적)",
+                        "💰 모델별 금액 비교 (억원)",
+                        "📊 모델별 진도율 비교 (%)",
+                    ]
+                )
+
+                with tab_q:
+                    fig_q = go.Figure()
+                    fig_q.add_trace(
+                        go.Bar(
+                            x=x_labels,
+                            y=[r["plan_qty"] for r in filtered_rows],
+                            name=f"{m_lbl} 계획",
+                            marker_color="#d1d5db",
+                            marker_line=dict(width=1.2, color="#111"),
+                            text=[format_k(r["plan_qty"]) if r["plan_qty"] > 0 else "" for r in filtered_rows],
+                            textposition="outside",
+                        )
+                    )
+                    fig_q.add_trace(
+                        go.Bar(
+                            x=x_labels,
+                            y=[r["target_qty"] for r in filtered_rows],
+                            name="목표",
+                            marker_color="#10b981",
+                            marker_line=dict(width=1.2, color="#111"),
+                            text=[format_k(r["target_qty"]) if r["target_qty"] > 0 else "" for r in filtered_rows],
+                            textposition="outside",
+                        )
+                    )
+                    fig_q.add_trace(
+                        go.Bar(
+                            x=x_labels,
+                            y=[r["act_qty"] for r in filtered_rows],
+                            name="실적",
+                            marker_color="#0044ff",
+                            marker_line=dict(width=1.2, color="#111"),
+                            text=[format_k(r["act_qty"]) if r["act_qty"] > 0 else "" for r in filtered_rows],
+                            textposition="outside",
+                        )
+                    )
+                    fig_q.update_layout(
+                        barmode="group",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        hovermode="x unified",
+                        margin=dict(l=20, r=20, t=35, b=20),
+                        legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
+                    )
+                    st.plotly_chart(fig_q, use_container_width=True)
+
+                with tab_a:
+                    fig_a = go.Figure()
+                    fig_a.add_trace(
+                        go.Bar(
+                            x=x_labels,
+                            y=[r["plan_amt"] for r in filtered_rows],
+                            name=f"{m_lbl} 계획(억)",
+                            marker_color="#d1d5db",
+                            marker_line=dict(width=1.2, color="#111"),
+                            text=[f"{r['plan_amt']:,.1f}" if r["plan_amt"] > 0 else "" for r in filtered_rows],
+                            textposition="outside",
+                        )
+                    )
+                    fig_a.add_trace(
+                        go.Bar(
+                            x=x_labels,
+                            y=[r["target_amt"] for r in filtered_rows],
+                            name="목표(억)",
+                            marker_color="#10b981",
+                            marker_line=dict(width=1.2, color="#111"),
+                            text=[f"{r['target_amt']:,.1f}" if r["target_amt"] > 0 else "" for r in filtered_rows],
+                            textposition="outside",
+                        )
+                    )
+                    fig_a.add_trace(
+                        go.Bar(
+                            x=x_labels,
+                            y=[r["act_amt"] for r in filtered_rows],
+                            name="실적(억)",
+                            marker_color="#0044ff",
+                            marker_line=dict(width=1.2, color="#111"),
+                            text=[f"{r['act_amt']:,.1f}" if r["act_amt"] > 0 else "" for r in filtered_rows],
+                            textposition="outside",
+                        )
+                    )
+                    fig_a.update_layout(
+                        barmode="group",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        hovermode="x unified",
+                        margin=dict(l=20, r=20, t=35, b=20),
+                        legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
+                    )
+                    st.plotly_chart(fig_a, use_container_width=True)
+
+                with tab_r:
+                    fig_r = go.Figure()
+                    fig_r.add_trace(
+                        go.Bar(
+                            x=x_labels,
+                            y=[r["rate_target"] for r in filtered_rows],
+                            name="목표 진도율(%)",
+                            marker_color="#9ca3af",
+                            marker_line=dict(width=1.2, color="#111"),
+                            text=[f"{r['rate_target']:,.0f}%" for r in filtered_rows],
+                            textposition="outside",
+                        )
+                    )
+                    fig_r.add_trace(
+                        go.Bar(
+                            x=x_labels,
+                            y=[r["rate_act"] for r in filtered_rows],
+                            name="실적 진도율(%)",
+                            marker_color=["#ef4444" if r["rate_diff"] < 0 else "#0044ff" for r in filtered_rows],
+                            marker_line=dict(width=1.2, color="#111"),
+                            text=[f"{r['rate_act']:,.0f}%" for r in filtered_rows],
+                            textposition="outside",
+                        )
+                    )
+                    fig_r.update_layout(
+                        barmode="group",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        hovermode="x unified",
+                        margin=dict(l=20, r=20, t=35, b=20),
+                        legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
+                    )
+                    st.plotly_chart(fig_r, use_container_width=True)
+
+                hdr_c1, hdr_c2 = st.columns([0.78, 0.22])
+                with hdr_c1:
+                    st.markdown(f"##### 📋 과제 / 모델별 상세 출하 실적 ({len(filtered_rows)}개 모델)")
+                with hdr_c2:
+                    df_export = pd.DataFrame(filtered_rows).rename(
+                        columns={
+                            "plan_qty": f"{m_lbl}계획_수량(개)",
+                            "plan_amt": f"{m_lbl}계획_금액(억원)",
+                            "target_qty": "목표_수량(개)",
+                            "target_amt": "목표_금액(억원)",
+                            "act_qty": "실적_수량(개)",
+                            "act_amt": "실적_금액(억원)",
+                            "diff_qty": "목표대비차이_수량(개)",
+                            "diff_amt": "목표대비차이_금액(억원)",
+                            "rate_target": "목표진도율(%)",
+                            "rate_act": "실적진도율(%)",
+                            "rate_diff": "진도율차이(%)",
+                        }
+                    )
+                    st.download_button(
+                        "📥 상세 표 CSV 다운로드",
+                        data=convert_df(df_export),
+                        file_name=f"shipment_report_{m_lbl}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+                render_shipment_html_table(filtered_rows, is_summary=False, month_lbl=m_lbl, ref_lbl=ref_lbl)
     else:
-        st.info("선택한 기간의 출하 실적/계획 데이터가 없습니다. [7. 데이터 관리 (Admin)]에서 파일을 업로드해 주세요.")
+        # 구양식(일별 출하실적)만 업로드된 경우 호환 표시
+        st.subheader("📦 1. 모델별 출하 및 매출 현황")
+        period_dict = st.session_state["chart_data"].get("ship_by_model_period", {})
+        has_legacy = any(bool(period_dict.get(k)) for k in ("daily", "weekly", "monthly"))
+
+        if has_legacy:
+            t_y, t_m, t_d = parse_target_ymd(st.session_state.get("target_date", default_target_date))
+            cur_w = st.session_state.get("cur_week_label", get_iso_week_label(datetime.date(t_y, t_m, t_d)))
+            p_label_map = {
+                "daily": f"📅 일간 ({t_m}/{t_d} 당일)",
+                "weekly": f"📊 주간 ({cur_w} 해당 주차)",
+                "monthly": f"🗓️ 월간 ({t_m}월 누계)",
+            }
+            sel_period = st.radio(
+                "조회 집계 범위",
+                options=["daily", "weekly", "monthly"],
+                format_func=lambda x: p_label_map[x],
+                horizontal=True,
+            )
+            df_ship = pd.DataFrame(period_dict.get(sel_period, [])).sort_values("출하실적(개)", ascending=False)
+            if not df_ship.empty:
+                st.plotly_chart(
+                    create_active_chart(
+                        f"모델별 출하 수량 - {p_label_map[sel_period]}",
+                        df_ship["모델명"].tolist(),
+                        df_ship["출하계획(개)"].tolist(),
+                        df_ship["출하실적(개)"].tolist(),
+                        unit="K",
+                    ),
+                    use_container_width=True,
+                )
+                st.dataframe(
+                    df_ship[
+                        [
+                            "모델명",
+                            "출하계획(K)",
+                            "출하실적(K)",
+                            "수량달성률(%)",
+                            "수량차질(K)",
+                            "매출계획(억원)",
+                            "매출실적(억원)",
+                            "매출달성률(%)",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        else:
+            st.info("💡 **[6. 데이터 관리 (Admin)] → 2. 출하 실적 파일**에서 신규 출하 실적 엑셀을 업로드해 주세요.")
 
 elif menu == "2. 모델별 생산실적":
     st.subheader("🛠️ 2. 모델별 생산실적")
@@ -2083,89 +2628,14 @@ elif menu == "2. 모델별 생산실적":
             hide_index=True,
         )
 
-elif menu == "3. 출하 SITE별 실적":
-    st.subheader("📍 3. 출하 SITE별 출하 및 매출 현황 (계획 vs 실적)")
-    t_y, t_m, t_d = parse_target_ymd(st.session_state.get("target_date", default_target_date))
-    cur_w = st.session_state.get("cur_week_label", get_iso_week_label(datetime.date(t_y, t_m, t_d)))
-
-    p_label_map = {
-        "daily": f"📅 일간 ({t_m}/{t_d} 당일)",
-        "weekly": f"📊 주간 ({cur_w} 해당 주차)",
-        "monthly": f"🗓️ 월간 ({t_m}월 누계)",
-    }
-    sel_period = st.radio(
-        "조회 집계 범위",
-        options=["daily", "weekly", "monthly"],
-        format_func=lambda x: p_label_map[x],
-        horizontal=True,
-    )
-
-    period_dict = st.session_state["chart_data"].get("ship_by_site_period", {})
-    rows = period_dict.get(sel_period) if period_dict else st.session_state["chart_data"].get("ship_by_site", [])
-    df_site = pd.DataFrame(rows or [])
-
-    if not df_site.empty:
-        df_site = df_site.sort_values("출하실적(개)", ascending=False)
-
-        tab_s_qty, tab_s_rev = st.tabs(["🚚 SITE별 출하 수량 (K)", "💰 SITE별 매출액 (억원)"])
-        with tab_s_qty:
-            st.plotly_chart(
-                create_active_chart(
-                    f"SITE별 출하 수량 - {p_label_map[sel_period]}",
-                    df_site["SITE"].tolist(),
-                    df_site["출하계획(개)"].tolist(),
-                    df_site["출하실적(개)"].tolist(),
-                    unit="K",
-                ),
-                use_container_width=True,
-            )
-        with tab_s_rev:
-            st.plotly_chart(
-                create_active_chart(
-                    f"SITE별 매출액 - {p_label_map[sel_period]}",
-                    df_site["SITE"].tolist(),
-                    df_site["매출계획(억원)"].tolist(),
-                    df_site["매출실적(억원)"].tolist(),
-                    unit="억원",
-                ),
-                use_container_width=True,
-            )
-
-        col1, col2 = st.columns([0.8, 0.2])
-        with col2:
-            st.download_button(
-                label="📥 엑셀(CSV) 다운로드",
-                data=convert_df(df_site),
-                file_name=f"site_shipment_{sel_period}.csv",
-                mime="text/csv",
-            )
-        st.dataframe(
-            df_site[
-                [
-                    "SITE",
-                    "출하계획(K)",
-                    "출하실적(K)",
-                    "수량달성률(%)",
-                    "수량차질(K)",
-                    "매출계획(억원)",
-                    "매출실적(억원)",
-                    "매출달성률(%)",
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("선택한 기간의 SITE별 출하 실적/계획 데이터가 없습니다. [7. 데이터 관리 (Admin)]에서 파일을 업로드해 주세요.")
-
-elif menu == "4. 고객 FCST 조회":
-    st.title("📈 4. 고객 FCST 조회 (모델별 공급 일정)")
+elif menu == "3. 고객 FCST 조회":
+    st.title("📈 3. 고객 FCST 조회 (모델별 공급 일정)")
     fcst_data = st.session_state.get("fcst_data", {"rows": [], "date_cols": []})
     fcst_rows = fcst_data.get("rows", [])
     date_cols = fcst_data.get("date_cols", [])
 
     if not fcst_rows:
-        st.info("💡 출하 계획 파일(RTF Main 시트)을 **[7. 데이터 관리 (Admin)]** 메뉴에서 업로드 및 분석해 주세요.")
+        st.info("💡 출하 계획 파일(RTF Main 시트)을 **[6. 데이터 관리 (Admin)]** 메뉴에서 업로드 및 분석해 주세요.")
     else:
         clean_rows = [{k: v for k, v in r.items() if k != "_by_ymd"} for r in fcst_rows]
         df_fcst = pd.DataFrame(clean_rows)
@@ -2309,8 +2779,8 @@ elif menu == "4. 고객 FCST 조회":
                 )
                 st.plotly_chart(fig_trend, use_container_width=True)
 
-elif menu == "5. 완제품 재고 조회":
-    st.subheader("🏢 5. 완제품 재고 조회 (전체 통합)")
+elif menu == "4. 완제품 재고 조회":
+    st.subheader("🏢 4. 완제품 재고 조회 (전체 통합)")
     st.metric(
         "📦 당일 완제품 총 재고",
         f"{format_k(st.session_state['inventory_data']['qty'])}",
@@ -2318,20 +2788,19 @@ elif menu == "5. 완제품 재고 조회":
         delta_color="off",
     )
 
-elif menu == "6. 캘린더":
-    st.title("🗓️ 6. 월간 FCST 공급 및 출하 캘린더")
+elif menu == "5. 캘린더":
+    st.title("🗓️ 5. 월간 FCST 공급 및 출하 캘린더")
     fcst_data = st.session_state.get("fcst_data", {"rows": [], "date_cols": []})
     fcst_rows = fcst_data.get("rows", [])
     actual_by_date = st.session_state.get("actual_by_date", {})
     loaded_yms = set(st.session_state.get("actual_months_loaded", []))
 
     if not fcst_rows and not actual_by_date:
-        st.info("💡 출하 계획(RTF Main) 또는 출하 실적 파일을 **[7. 데이터 관리 (Admin)]** 메뉴에서 업로드 및 분석해 주세요.")
+        st.info("💡 출하 계획 파일(RTF Main)을 **[6. 데이터 관리 (Admin)]** 메뉴에서 업로드 및 분석해 주세요.")
     else:
         t_y, t_m, t_d = parse_target_ymd(st.session_state.get("target_date", default_target_date))
         target_date_obj = datetime.date(t_y, t_m, t_d)
 
-        # 데이터에 존재하는 모든 연-월 + 기준월 전후 월 자동 구성
         ym_set = set()
         for delta_m in (-1, 0, 1, 2):
             total_m = (t_y * 12 + (t_m - 1)) + delta_m
@@ -2443,7 +2912,6 @@ elif menu == "6. 캘린더":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # 구버전 Streamlit 용 Fallback 상세 컨테이너
         if st.session_state.get("active_cal_popup"):
             p_day, p_month, p_year, p_act_mode = st.session_state["active_cal_popup"]
             if p_year == cur_year and p_month == selected_m:
@@ -2507,10 +2975,6 @@ elif menu == "6. 캘린더":
                             border_css = "3px solid #0044ff; box-shadow: 4px 4px 0px #0044ff;"
                             bg_css = "#f0f5ff"
                             badge_target = "<span style='background: #0044ff; color: #ffffff; font-size: 10px; font-weight: 800; padding: 1px 4px; border-radius: 3px; margin-left: 4px;'>기준일</span>"
-                        elif is_past_or_target and not has_month_actuals:
-                            border_css = "2px solid #111111; box-shadow: 3px 3px 0px #111111;"
-                            bg_css = "#ffffff" if plan_q > 0 else "#fafafa"
-                            badge_target = "<span style='background: #e5e7eb; color: #4b5563; font-size: 9px; font-weight: 800; padding: 1px 4px; border-radius: 3px; margin-left: 4px;'>실적미등록</span>"
                         else:
                             border_css = "2px solid #111111; box-shadow: 3px 3px 0px #111111;"
                             bg_css = "#ffffff" if (plan_q > 0 or act_q > 0) else "#fafafa"
