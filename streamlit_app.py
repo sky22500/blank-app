@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 # 1. 페이지 설정 및 영구 저장소 경로 설정
 st.set_page_config(page_title="마케팅 부문 대시보드", layout="wide")
 
-STATE_VERSION = 6
+STATE_VERSION = 7
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 STORE_DIR = os.path.join(BASE_DIR, ".dashboard_store")
 STATE_JSON_PATH = os.path.join(STORE_DIR, "dashboard_state.json")
@@ -300,6 +300,13 @@ def get_default_state():
         "loaded_sheet_info": {},
         "mapping_data": {"gh_map": {}, "suffix_map": {}, "model_map": {}, "gh_to_model": {}},
         "fcst_data": {"rows": [], "date_cols": []},
+        "manual_monthly_override": {
+            "enabled": False,
+            "ship_qty_k": None,
+            "rev_amt": None,
+            "target_qty_k": None,
+            "target_rev_amt": None,
+        },
         "shipment_report": {
             "sheet_name": "",
             "month_label": "",
@@ -1742,6 +1749,25 @@ def _build_merged_table(plan_dict, act_dict, key_col_name):
     return rows
 
 
+
+def apply_manual_monthly_override():
+    ov = st.session_state.get("manual_monthly_override") or {}
+    if not ov.get("enabled"):
+        return
+    m_kpi = st.session_state["kpi_data"]["monthly"]
+    m_chart = st.session_state["chart_data"]
+
+    if ov.get("ship_qty_k") is not None:
+        m_kpi["ship_p"] = int(round(float(ov["ship_qty_k"]) * 1000.0))
+        m_chart["monthly_ship_p"] = [m_kpi["ship_p"]]
+    if ov.get("rev_amt") is not None:
+        m_kpi["rev_p"] = round(float(ov["rev_amt"]), 2)
+        m_chart["monthly_rev_p"] = [m_kpi["rev_p"]]
+    if ov.get("target_qty_k") is not None:
+        m_kpi["target_ship"] = int(round(float(ov["target_qty_k"]) * 1000.0))
+    if ov.get("target_rev_amt") is not None:
+        m_kpi["target_rev"] = round(float(ov["target_rev_amt"]), 2)
+
 # 5. 전체 데이터 파이프라인 실행 함수
 def run_dashboard_pipeline(target_date_input, ex_rate_input, uploaded_files):
     os.makedirs(STORE_DIR, exist_ok=True)
@@ -1966,6 +1992,7 @@ def run_dashboard_pipeline(target_date_input, ex_rate_input, uploaded_files):
         except Exception as e:
             messages.append(("error", f"통합 출하·매출 파일 파싱 오류: {e}"))
 
+    apply_manual_monthly_override()
     st.session_state["last_updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     save_state_to_disk()
     return messages
@@ -1983,6 +2010,7 @@ def init_and_sync_session():
     if disk_mtime is not None and (loaded_mtime is None or disk_mtime > loaded_mtime):
         ok, saved_ver = load_state_from_disk()
         if ok:
+            apply_manual_monthly_override()
             if saved_ver != STATE_VERSION and (
                 os.path.exists(CACHED_EXCEL_PATHS["integrated"]) or os.path.exists(CACHED_EXCEL_PATHS["prod"])
             ):
@@ -2668,6 +2696,58 @@ elif menu == "🏠 현황":
                 use_container_width=True,
             )
 
+    # 숨김 수동 조절 모드 (비밀번호 7777 입력 시 활성화)
+    st.markdown("<div style='margin-top: 36px; opacity: 0.55;'>", unsafe_allow_html=True)
+    with st.expander("·", expanded=False):
+        secret_pw = st.text_input("코드", type="password", key="secret_override_pw", label_visibility="collapsed", placeholder="입력")
+        if secret_pw == "7777":
+            st.markdown("#### 🛠️ 월간 계획 수동 조절 모드")
+            ov_cur = st.session_state.get("manual_monthly_override") or {}
+            m_cur = st.session_state["kpi_data"]["monthly"]
+
+            default_p_k = float(ov_cur["ship_qty_k"]) if ov_cur.get("ship_qty_k") is not None else round(float(m_cur.get("ship_p", 0)) / 1000.0, 1)
+            default_r_a = float(ov_cur["rev_amt"]) if ov_cur.get("rev_amt") is not None else round(float(m_cur.get("rev_a", 0.0)), 2)
+            default_t_k = float(ov_cur["target_qty_k"]) if ov_cur.get("target_qty_k") is not None else round(float(m_cur.get("target_ship", 0)) / 1000.0, 1)
+            default_t_a = float(ov_cur["target_rev_amt"]) if ov_cur.get("target_rev_amt") is not None else round(float(m_cur.get("target_rev", 0.0)), 2)
+
+            ov_c1, ov_c2 = st.columns(2)
+            with ov_c1:
+                in_ship_k = st.number_input("월 계획 수량 (K)", value=default_p_k, step=10.0, format="%.1f", key="ov_ship_k")
+                in_rev_a = st.number_input("월 계획 금액 (억원)", value=default_r_a, step=1.0, format="%.2f", key="ov_rev_a")
+            with ov_c2:
+                in_tgt_k = st.number_input("기준일 누적 목표 수량 (K)", value=default_t_k, step=10.0, format="%.1f", key="ov_tgt_k")
+                in_tgt_a = st.number_input("기준일 누적 목표 금액 (억원)", value=default_t_a, step=1.0, format="%.2f", key="ov_tgt_a")
+
+            b_s1, b_s2 = st.columns([0.65, 0.35])
+            with b_s1:
+                if st.button("적용 및 저장", type="primary", key="btn_apply_manual_ov", use_container_width=True):
+                    st.session_state["manual_monthly_override"] = {
+                        "enabled": True,
+                        "ship_qty_k": float(in_ship_k),
+                        "rev_amt": float(in_rev_a),
+                        "target_qty_k": float(in_tgt_k),
+                        "target_rev_amt": float(in_tgt_a),
+                    }
+                    apply_manual_monthly_override()
+                    save_state_to_disk()
+                    st.rerun()
+            with b_s2:
+                if st.button("자동값 복원", key="btn_reset_manual_ov", use_container_width=True):
+                    st.session_state["manual_monthly_override"] = {
+                        "enabled": False,
+                        "ship_qty_k": None,
+                        "rev_amt": None,
+                        "target_qty_k": None,
+                        "target_rev_amt": None,
+                    }
+                    run_dashboard_pipeline(
+                        st.session_state.get("target_date", default_target_date),
+                        st.session_state.get("ex_rate", 1330.0),
+                        {},
+                    )
+                    st.rerun()
+    render_html("</div>")
+
 elif menu == "1. 모델별 출하실적":
     rep = st.session_state.get("shipment_report", {})
     sum_rows = rep.get("summary_rows", [])
@@ -2717,7 +2797,12 @@ elif menu == "1. 모델별 출하실적":
                 ]
 
                 if filtered_rows:
-                    x_labels = [r[x_axis_col] for r in filtered_rows]
+                    only_over_30k = st.checkbox("📈 그래프에 계획 30K 초과 모델만 표시 (> 30K)", value=True, key="chk_ship_plan_over_30k")
+                    chart_rows = [r for r in filtered_rows if r.get("plan_qty", 0) > 30_000] if only_over_30k else filtered_rows
+                    if not chart_rows:
+                        st.caption("※ 계획 30K 초과 모델이 없어 전체 필터링 모델을 기준으로 그래프를 표시합니다.")
+                        chart_rows = filtered_rows
+                    x_labels = [r[x_axis_col] for r in chart_rows]
                     tab_q, tab_a, tab_r = st.tabs(
                         [
                             "🚚 수량 비교 (계획 vs 목표 vs 실적)",
@@ -2731,33 +2816,33 @@ elif menu == "1. 모델별 출하실적":
                         fig_q.add_trace(
                             go.Bar(
                                 x=x_labels,
-                                y=[r["plan_qty"] for r in filtered_rows],
+                                y=[r["plan_qty"] for r in chart_rows],
                                 name=f"{m_lbl} 계획",
                                 marker_color="#d1d5db",
                                 marker_line=dict(width=1.2, color="#111"),
-                                text=[format_k(r["plan_qty"]) if r["plan_qty"] > 0 else "" for r in filtered_rows],
+                                text=[format_k(r["plan_qty"]) if r["plan_qty"] > 0 else "" for r in chart_rows],
                                 textposition="outside",
                             )
                         )
                         fig_q.add_trace(
                             go.Bar(
                                 x=x_labels,
-                                y=[r["target_qty"] for r in filtered_rows],
+                                y=[r["target_qty"] for r in chart_rows],
                                 name="목표",
                                 marker_color="#10b981",
                                 marker_line=dict(width=1.2, color="#111"),
-                                text=[format_k(r["target_qty"]) if r["target_qty"] > 0 else "" for r in filtered_rows],
+                                text=[format_k(r["target_qty"]) if r["target_qty"] > 0 else "" for r in chart_rows],
                                 textposition="outside",
                             )
                         )
                         fig_q.add_trace(
                             go.Bar(
                                 x=x_labels,
-                                y=[r["act_qty"] for r in filtered_rows],
+                                y=[r["act_qty"] for r in chart_rows],
                                 name="실적",
                                 marker_color="#0044ff",
                                 marker_line=dict(width=1.2, color="#111"),
-                                text=[format_k(r["act_qty"]) if r["act_qty"] > 0 else "" for r in filtered_rows],
+                                text=[format_k(r["act_qty"]) if r["act_qty"] > 0 else "" for r in chart_rows],
                                 textposition="outside",
                             )
                         )
@@ -2775,33 +2860,33 @@ elif menu == "1. 모델별 출하실적":
                         fig_a.add_trace(
                             go.Bar(
                                 x=x_labels,
-                                y=[r["plan_amt"] for r in filtered_rows],
+                                y=[r["plan_amt"] for r in chart_rows],
                                 name=f"{m_lbl} 계획(억)",
                                 marker_color="#d1d5db",
                                 marker_line=dict(width=1.2, color="#111"),
-                                text=[f"{r['plan_amt']:,.1f}" if r["plan_amt"] > 0 else "" for r in filtered_rows],
+                                text=[f"{r['plan_amt']:,.1f}" if r["plan_amt"] > 0 else "" for r in chart_rows],
                                 textposition="outside",
                             )
                         )
                         fig_a.add_trace(
                             go.Bar(
                                 x=x_labels,
-                                y=[r["target_amt"] for r in filtered_rows],
+                                y=[r["target_amt"] for r in chart_rows],
                                 name="목표(억)",
                                 marker_color="#10b981",
                                 marker_line=dict(width=1.2, color="#111"),
-                                text=[f"{r['target_amt']:,.1f}" if r["target_amt"] > 0 else "" for r in filtered_rows],
+                                text=[f"{r['target_amt']:,.1f}" if r["target_amt"] > 0 else "" for r in chart_rows],
                                 textposition="outside",
                             )
                         )
                         fig_a.add_trace(
                             go.Bar(
                                 x=x_labels,
-                                y=[r["act_amt"] for r in filtered_rows],
+                                y=[r["act_amt"] for r in chart_rows],
                                 name="실적(억)",
                                 marker_color="#0044ff",
                                 marker_line=dict(width=1.2, color="#111"),
-                                text=[f"{r['act_amt']:,.1f}" if r["act_amt"] > 0 else "" for r in filtered_rows],
+                                text=[f"{r['act_amt']:,.1f}" if r["act_amt"] > 0 else "" for r in chart_rows],
                                 textposition="outside",
                             )
                         )
@@ -2819,22 +2904,22 @@ elif menu == "1. 모델별 출하실적":
                         fig_r.add_trace(
                             go.Bar(
                                 x=x_labels,
-                                y=[r["rate_target"] for r in filtered_rows],
+                                y=[r["rate_target"] for r in chart_rows],
                                 name="목표 진도율(%)",
                                 marker_color="#9ca3af",
                                 marker_line=dict(width=1.2, color="#111"),
-                                text=[f"{r['rate_target']:,.0f}%" for r in filtered_rows],
+                                text=[f"{r['rate_target']:,.0f}%" for r in chart_rows],
                                 textposition="outside",
                             )
                         )
                         fig_r.add_trace(
                             go.Bar(
                                 x=x_labels,
-                                y=[r["rate_act"] for r in filtered_rows],
+                                y=[r["rate_act"] for r in chart_rows],
                                 name="실적 진도율(%)",
-                                marker_color=["#ef4444" if r["rate_diff"] < 0 else "#0044ff" for r in filtered_rows],
+                                marker_color=["#ef4444" if r["rate_diff"] < 0 else "#0044ff" for r in chart_rows],
                                 marker_line=dict(width=1.2, color="#111"),
-                                text=[f"{r['rate_act']:,.0f}%" for r in filtered_rows],
+                                text=[f"{r['rate_act']:,.0f}%" for r in chart_rows],
                                 textposition="outside",
                             )
                         )
