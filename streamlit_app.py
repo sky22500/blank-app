@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 # 1. 페이지 설정 및 영구 저장소 경로 설정
 st.set_page_config(page_title="마케팅 부문 대시보드", layout="wide")
 
-STATE_VERSION = 10
+STATE_VERSION = 11
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 STORE_DIR = os.path.join(BASE_DIR, ".dashboard_store")
 STATE_JSON_PATH = os.path.join(STORE_DIR, "dashboard_state.json")
@@ -3516,7 +3516,183 @@ elif menu == "5. 캘린더":
         rtf_carry_q = int(st.session_state.get("rtf_prev_carryover_qty", 0))
         rtf_carry_rev = round(float(st.session_state.get("rtf_prev_carryover_rev", 0.0)), 2)
 
+        # 2~5일 합병 카드의 대표 값 계산(엑셀표와 동일한 값 유지)
+        merged_2_5_q = 0
+        merged_2_5_rev = 0.0
+        merged_2_5_items = []
+        for _d in range(2, min(6, num_days + 1)):
+            _ymd = f"{cur_year:04d}-{selected_m:02d}-{_d:02d}"
+            _p_info = day_supply_map.get(_d, {"total": 0, "total_rev": 0.0, "items": []})
+            _a_info = (
+                cal_prod_actual_override.get(_ymd)
+                if "cal_prod_actual_override" in locals() and _ymd in cal_prod_actual_override
+                else actual_by_date.get(_ymd, {"qty": 0, "rev": 0.0, "items": []})
+            )
+            _qv = _a_info["qty"] if _a_info["qty"] > 0 else (_p_info["total"] if _p_info["total"] > 0 else rtf_carry_q)
+            _rv = _a_info["rev"] if _a_info["rev"] > 0 else (_p_info["total_rev"] if _p_info["total_rev"] > 0 else rtf_carry_rev)
+            if _qv > merged_2_5_q:
+                merged_2_5_q = _qv
+            if _rv > merged_2_5_rev:
+                merged_2_5_rev = _rv
+            for _it in (_a_info.get("items") or _p_info.get("items") or []):
+                merged_2_5_items.append(_it)
+
+        merged_2_5_d_info = {"total": merged_2_5_q, "total_rev": merged_2_5_rev, "items": merged_2_5_items}
+        merged_2_5_a_info = {"qty": merged_2_5_q, "rev": merged_2_5_rev, "items": merged_2_5_items}
+
+        # CSS for seamlessly merging days 2, 3, 4, 5 into one single board across columns
+        render_html("""
+        <style>
+            .merged-rtf-board {
+                background: #ffffff;
+                border: 2.5px solid #111111;
+                border-radius: 5px;
+                padding: 12px 16px;
+                box-shadow: 4px 4px 0px #0044ff;
+                margin-bottom: 6px;
+                min-height: 108px;
+                display: flex;
+                flex-direction: column;
+                justify-content: space-between;
+            }
+            .merged-rtf-top {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1.5px solid #e5e7eb;
+                padding-bottom: 6px;
+                margin-bottom: 8px;
+            }
+            .merged-rtf-days {
+                font-weight: 900;
+                font-size: 16px;
+                color: #111111;
+            }
+            .merged-rtf-badge {
+                background: #eef2ff;
+                color: #0044ff;
+                border: 1.5px solid #0044ff;
+                font-size: 11px;
+                font-weight: 900;
+                padding: 2px 8px;
+                border-radius: 4px;
+            }
+            .merged-rtf-body {
+                display: flex;
+                gap: 28px;
+                align-items: center;
+                flex-wrap: wrap;
+                font-size: 13px;
+                font-weight: 800;
+                color: #111111;
+            }
+        </style>
+        """)
+
         for week in month_matrix:
+            has_2_5_in_week = any(2 <= d <= 5 for d in week)
+            # 2~5일이 모두 한 주(2~5일)에 들어있는 경우: 1일(col 0), 2~5일 합병 보드(col 1..4), 6~7일(col 5..6)으로 렌더
+            if set([2, 3, 4, 5]).issubset(set(week)):
+                d1_num = week[0]
+                d6_num = week[5]
+                d7_num = week[6]
+                c_d1, c_merge, c_d6, c_d7 = st.columns([1, 4, 1, 1])
+
+                # 1일 (일요일)
+                with c_d1:
+                    if d1_num == 0:
+                        render_html("<div style='height: 112px; background: rgba(0,0,0,0.02); border: 1px dashed #d1d5db; border-radius: 4px; margin-bottom: 6px;'></div>")
+                    else:
+                        cell_date = datetime.date(cur_year, selected_m, d1_num)
+                        ymd_key = cell_date.strftime("%Y-%m-%d")
+                        d_info = day_supply_map[d1_num]
+                        plan_q, plan_rev = d_info["total"], d_info["total_rev"]
+                        is_target = cell_date == target_date_obj
+                        show_actual_mode = (cell_date <= target_date_obj) and has_month_actuals
+                        act_day_data = (
+                            cal_prod_actual_override.get(ymd_key)
+                            if "cal_prod_actual_override" in locals() and ymd_key in cal_prod_actual_override
+                            else actual_by_date.get(ymd_key, {"qty": 0, "rev": 0.0, "items": []})
+                        )
+                        act_q, act_rev = act_day_data["qty"], act_day_data["rev"]
+                        border_css = "3px solid #0044ff; box-shadow: 4px 4px 0px #0044ff;" if is_target else "2px solid #111111; box-shadow: 3px 3px 0px #111111;"
+                        bg_css = "#f0f5ff" if is_target else ("#ffffff" if (plan_q > 0 or act_q > 0) else "#fafafa")
+                        badge_target = "<span style='background: #0044ff; color: #ffffff; font-size: 10px; font-weight: 800; padding: 1px 4px; border-radius: 3px; margin-left: 4px;'>기준일</span>" if is_target else ""
+                        if show_actual_mode:
+                            dq = act_q - plan_q
+                            dr = act_rev - plan_rev
+                            dq_tag = f"<span style='color:#0044ff;font-weight:900;'>+{format_k(dq)}</span>" if dq > 0 else (f"<span style='color:#ef4444;font-weight:900;'>-{format_k(abs(dq))}</span>" if dq < 0 else "<span style='color:#6b7280;font-weight:800;'>0K</span>")
+                            dr_tag = f"<span style='color:#0044ff;font-weight:900;'>+{dr:,.2f}억</span>" if dr > 0 else (f"<span style='color:#ef4444;font-weight:900;'>-{abs(dr):,.2f}억</span>" if dr < 0 else "<span style='color:#6b7280;font-weight:800;'>0.00억</span>")
+                            b_html = f"<div style='display:flex;flex-direction:column;gap:4px;margin-top:4px;font-size:11px;font-weight:800;'><div style='display:flex;justify-content:space-between;'><span style='color:#4b5563;'>실적 수량:</span><span><b>{format_k(act_q)}</b> ({dq_tag})</span></div><div style='display:flex;justify-content:space-between;'><span style='color:#4b5563;'>실적 매출:</span><span><b>{act_rev:,.2f}억</b> ({dr_tag})</span></div></div>"
+                        else:
+                            b_html = f"<div style='display:flex;flex-direction:column;gap:4px;margin-top:4px;font-size:11px;font-weight:800;'><div style='display:flex;justify-content:space-between;'><span style='color:#4b5563;'>계획 수량:</span><span><b>{format_k(plan_q)}</b></span></div><div style='display:flex;justify-content:space-between;'><span style='color:#4b5563;'>계획 매출:</span><span style='color:#0044ff;'><b>{plan_rev:,.2f}억원</b></span></div></div>"
+                        render_html(f"<div class='cal-card-wrapper'><div class='cal-card' style='background:{bg_css};border:{border_css};'><div style='display:flex;justify-content:space-between;align-items:center;border-bottom:1.5px solid #e5e7eb;padding-bottom:3px;margin-bottom:3px;'><span style='font-weight:900;font-size:15px;color:#ef4444;'>{d1_num}{badge_target}</span><span style='font-size:10px;font-weight:800;color:#6b7280;'>계획 {format_k(plan_q)}</span></div>{b_html}</div></div>")
+                        if st.button(f"🔍 {d1_num}일", key=f"btn_pop_{cur_year}_{selected_m}_{d1_num}", use_container_width=True):
+                            if hasattr(st, "dialog"):
+                                show_day_detail_dialog(d1_num, selected_m, cur_year, d_info, act_day_data, show_actual_mode)
+                            else:
+                                st.session_state["active_cal_popup"] = (d1_num, selected_m, cur_year, show_actual_mode)
+                                st.rerun()
+
+                # 2, 3, 4, 5일 단일 합병 보드
+                with c_merge:
+                    render_html(f"""
+                    <div class="merged-rtf-board">
+                        <div class="merged-rtf-top">
+                            <span class="merged-rtf-days">2일 · 3일 · 4일 · 5일</span>
+                            <span class="merged-rtf-badge">RTF 수립 이전</span>
+                        </div>
+                        <div class="merged-rtf-body">
+                            <div>RTF 수립 이전 : <span style="font-size:16px;font-weight:900;color:#111111;">{format_k(merged_2_5_q)}</span></div>
+                            <div>RTF 수립 이전 : <span style="font-size:16px;font-weight:900;color:#0044ff;">{merged_2_5_rev:,.2f}억</span></div>
+                        </div>
+                    </div>
+                    """)
+                    if st.button("🔍 2~5일 (RTF 수립 이전) 상세 보기", key=f"btn_pop_rtf_merged_{cur_year}_{selected_m}", use_container_width=True):
+                        if hasattr(st, "dialog"):
+                            show_day_detail_dialog(2, selected_m, cur_year, merged_2_5_d_info, merged_2_5_a_info, True)
+                        else:
+                            st.session_state["active_cal_popup"] = (2, selected_m, cur_year, True)
+                            st.rerun()
+
+                # 6일, 7일 (금·토)
+                for d_num, d_idx, col_slot in [(d6_num, 5, c_d6), (d7_num, 6, c_d7)]:
+                    with col_slot:
+                        cell_date = datetime.date(cur_year, selected_m, d_num)
+                        ymd_key = cell_date.strftime("%Y-%m-%d")
+                        d_info = day_supply_map[d_num]
+                        plan_q, plan_rev = d_info["total"], d_info["total_rev"]
+                        is_target = cell_date == target_date_obj
+                        show_actual_mode = (cell_date <= target_date_obj) and has_month_actuals
+                        act_day_data = (
+                            cal_prod_actual_override.get(ymd_key)
+                            if "cal_prod_actual_override" in locals() and ymd_key in cal_prod_actual_override
+                            else actual_by_date.get(ymd_key, {"qty": 0, "rev": 0.0, "items": []})
+                        )
+                        act_q, act_rev = act_day_data["qty"], act_day_data["rev"]
+                        border_css = "3px solid #0044ff; box-shadow: 4px 4px 0px #0044ff;" if is_target else "2px solid #111111; box-shadow: 3px 3px 0px #111111;"
+                        bg_css = "#f0f5ff" if is_target else ("#ffffff" if (plan_q > 0 or act_q > 0) else "#fafafa")
+                        badge_target = "<span style='background: #0044ff; color: #ffffff; font-size: 10px; font-weight: 800; padding: 1px 4px; border-radius: 3px; margin-left: 4px;'>기준일</span>" if is_target else ""
+                        day_color = "#0044ff" if d_idx == 6 else "#111111"
+                        if show_actual_mode:
+                            dq = act_q - plan_q
+                            dr = act_rev - plan_rev
+                            dq_tag = f"<span style='color:#0044ff;font-weight:900;'>+{format_k(dq)}</span>" if dq > 0 else (f"<span style='color:#ef4444;font-weight:900;'>-{format_k(abs(dq))}</span>" if dq < 0 else "<span style='color:#6b7280;font-weight:800;'>0K</span>")
+                            dr_tag = f"<span style='color:#0044ff;font-weight:900;'>+{dr:,.2f}억</span>" if dr > 0 else (f"<span style='color:#ef4444;font-weight:900;'>-{abs(dr):,.2f}억</span>" if dr < 0 else "<span style='color:#6b7280;font-weight:800;'>0.00억</span>")
+                            b_html = f"<div style='display:flex;flex-direction:column;gap:4px;margin-top:4px;font-size:11px;font-weight:800;'><div style='display:flex;justify-content:space-between;'><span style='color:#4b5563;'>실적 수량:</span><span><b>{format_k(act_q)}</b> ({dq_tag})</span></div><div style='display:flex;justify-content:space-between;'><span style='color:#4b5563;'>실적 매출:</span><span><b>{act_rev:,.2f}억</b> ({dr_tag})</span></div></div>"
+                        else:
+                            b_html = f"<div style='display:flex;flex-direction:column;gap:4px;margin-top:4px;font-size:11px;font-weight:800;'><div style='display:flex;justify-content:space-between;'><span style='color:#4b5563;'>계획 수량:</span><span><b>{format_k(plan_q)}</b></span></div><div style='display:flex;justify-content:space-between;'><span style='color:#4b5563;'>계획 매출:</span><span style='color:#0044ff;'><b>{plan_rev:,.2f}억원</b></span></div></div>"
+                        unique_models_cnt = len(set(it["model"] for it in (d_info["items"] + (act_day_data["items"] if show_actual_mode else []))))
+                        render_html(f"<div class='cal-card-wrapper'><div class='cal-card' style='background:{bg_css};border:{border_css};'><div style='display:flex;justify-content:space-between;align-items:center;border-bottom:1.5px solid #e5e7eb;padding-bottom:3px;margin-bottom:3px;'><span style='font-weight:900;font-size:15px;color:{day_color};'>{d_num}{badge_target}</span><span style='font-size:10px;font-weight:800;color:#6b7280;'>계획 {format_k(plan_q)}</span></div>{b_html}</div></div>")
+                        btn_label = f"🔍 상세 ({unique_models_cnt}종)" if (plan_q > 0 or act_q > 0) else f"🔍 {d_num}일"
+                        if st.button(btn_label, key=f"btn_pop_{cur_year}_{selected_m}_{d_num}", use_container_width=True):
+                            if hasattr(st, "dialog"):
+                                show_day_detail_dialog(d_num, selected_m, cur_year, d_info, act_day_data, show_actual_mode)
+                            else:
+                                st.session_state["active_cal_popup"] = (d_num, selected_m, cur_year, show_actual_mode)
+                                st.rerun()
+                continue
+
             w_cols = st.columns(7)
             for day_idx, d_num in enumerate(week):
                 with w_cols[day_idx]:
@@ -3525,23 +3701,18 @@ elif menu == "5. 캘린더":
                             "<div style='height: 112px; background: rgba(0,0,0,0.02); border: 1px dashed #d1d5db; border-radius: 4px; margin-bottom: 6px;'></div>"
                         )
                     elif 2 <= d_num <= 5:
-                        # 2~5일: 엑셀표와 동일한 계획/실적 값 유지하되 표기 라벨을 'RTF 수립 이전'으로 통일
                         cell_date = datetime.date(cur_year, selected_m, d_num)
                         ymd_key = cell_date.strftime("%Y-%m-%d")
                         d_info = day_supply_map[d_num]
-                        plan_q = d_info["total"]
-                        plan_rev = d_info["total_rev"]
+                        plan_q, plan_rev = d_info["total"], d_info["total_rev"]
                         act_day_data = (
                             cal_prod_actual_override.get(ymd_key)
                             if "cal_prod_actual_override" in locals() and ymd_key in cal_prod_actual_override
                             else actual_by_date.get(ymd_key, {"qty": 0, "rev": 0.0, "items": []})
                         )
-                        act_q = act_day_data["qty"]
-                        act_rev = act_day_data["rev"]
-
+                        act_q, act_rev = act_day_data["qty"], act_day_data["rev"]
                         disp_q_val = act_q if act_q > 0 else (plan_q if plan_q > 0 else rtf_carry_q)
                         disp_rev_val = act_rev if act_rev > 0 else (plan_rev if plan_rev > 0 else rtf_carry_rev)
-
                         day_color = "#ef4444" if day_idx == 0 else ("#0044ff" if day_idx == 6 else "#111111")
                         rtf_html = f"""
                         <div class="cal-card-wrapper">
