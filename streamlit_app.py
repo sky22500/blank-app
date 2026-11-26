@@ -6,6 +6,7 @@ import statistics
 import datetime
 import calendar
 import openpyxl
+from openpyxl.utils import get_column_letter
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
@@ -13,7 +14,7 @@ import plotly.graph_objects as go
 # 1. 페이지 설정 및 영구 저장소 경로 설정
 st.set_page_config(page_title="마케팅 부문 대시보드", layout="wide")
 
-STATE_VERSION = 4
+STATE_VERSION = 5
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 STORE_DIR = os.path.join(BASE_DIR, ".dashboard_store")
 STATE_JSON_PATH = os.path.join(STORE_DIR, "dashboard_state.json")
@@ -325,6 +326,8 @@ def get_default_state():
             "monthly": {
                 "prod_p": 0,
                 "prod_a": 0,
+                "prod_sheet_total": 0,
+                "prod_cur_w_add": 0,
                 "ship_p": 0,
                 "ship_a": 0,
                 "rev_p": 0.0,
@@ -461,7 +464,7 @@ def parse_mapping_excel(file_src):
         return None
 
 
-# 4-2. 생산 실적 파일 파서 (현행 유지)
+# 4-2. 생산 실적 파일 파서 (생산 섹션 전용 분리 · 주차별 순실적 계산 · 완제품재고 정밀 추출)
 def parse_production_excel(file_src, target_date_str):
     wb = openpyxl.load_workbook(file_src, data_only=True)
     t_y, t_m, t_d = parse_target_ymd(target_date_str)
@@ -479,6 +482,8 @@ def parse_production_excel(file_src, target_date_str):
         "weekly_actual": [],
         "monthly_plan": 0,
         "monthly_actual": 0,
+        "monthly_sheet_total": 0,
+        "monthly_cur_w_add": 0,
         "monthly_months": [f"{t_m}월"],
         "inventory_qty": 0,
         "inventory_days": 0.0,
@@ -489,135 +494,141 @@ def parse_production_excel(file_src, target_date_str):
 
     summary_sheet_name = next((s for s in wb.sheetnames if "요약" in s), wb.sheetnames[0])
     sheet = wb[summary_sheet_name]
+    merged_map = build_merged_lookup(sheet)
 
-    for r in range(1, 35):
-        row_joined = "".join([str(safe_cell(sheet, r, c) or "") for c in range(1, 10)]).replace(" ", "")
+    # 1) 당일 완제품재고 추출 (하단 '당일 완제품재고' 아래 '수량' / '재고일수' 행 탐색)
+    for r in range(1, sheet.max_row + 1):
+        row_joined = "".join(norm_txt(safe_cell(sheet, r, c)) for c in range(1, 8))
         if "당일완제품재고" in row_joined:
-            inv_col = None
-            for c in range(2, 10):
-                hdr = str(safe_cell(sheet, r + 1, c) or "").replace(" ", "").upper()
-                if any(k in hdr for k in ["전체", "합계", "총계", "TOTAL"]):
-                    inv_col = c
-                    break
-            try:
-                raw_q = safe_cell(sheet, r + 2, inv_col) if inv_col else (safe_cell(sheet, r + 2, 2) or safe_cell(sheet, r + 2, 3))
-                raw_d = safe_cell(sheet, r + 3, inv_col) if inv_col else (safe_cell(sheet, r + 3, 2) or safe_cell(sheet, r + 3, 3))
-                parsed["inventory_qty"] = int(round(extract_num(raw_q) or 0))
-                parsed["inventory_days"] = float(extract_num(raw_d) or 0.0)
-            except Exception:
-                pass
+            for sub_r in range(r + 1, min(sheet.max_row + 1, r + 5)):
+                lbl_a = norm_txt(safe_cell(sheet, sub_r, 1))
+                if "수량" in lbl_a:
+                    for c_try in range(2, 6):
+                        v_q = extract_num(safe_cell(sheet, sub_r, c_try))
+                        if v_q is not None and v_q > 0:
+                            parsed["inventory_qty"] = int(round(v_q))
+                            break
+                elif "재고일수" in lbl_a or "일수" in lbl_a:
+                    for c_try in range(2, 6):
+                        v_d = extract_num(safe_cell(sheet, sub_r, c_try))
+                        if v_d is not None and v_d > 0:
+                            parsed["inventory_days"] = round(float(v_d), 1)
+                            break
             break
 
+    # 2) 요약 테이블 시작 행('구분') 탐색
     summary_start = 6
-    for r in range(1, 25):
-        if "구분" in "".join([str(safe_cell(sheet, r, c) or "") for c in range(1, 10)]).replace(" ", ""):
+    for r in range(1, 20):
+        if "구분" in "".join(norm_txt(safe_cell(sheet, r, c)) for c in range(1, 8)):
             summary_start = r
             break
 
+    # 3) 헤더 행에서 일자별 컬럼, 주차 합계('W45 합계' 등), 월합계('11월 합계') 위치 파악
     col_map = {}
-    weekly_cols = {}
-    w_start_col = None
-    w_first_label = get_month_iso_weeks(t_y, t_m)[0]
+    weekly_sum_cols = {}
+    daily_date_cols = {}  # col_idx -> datetime.date
 
     for r in range(summary_start, summary_start + 3):
+        run_yr = t_y
+        prev_m = None
         for c in range(1, sheet.max_column + 1):
             val = safe_cell(sheet, r, c)
-            if not val:
+            if val is None:
                 continue
             if is_match_date(val, target_date_str) and "target" not in col_map:
                 col_map["target"] = c
-            vs = str(val).replace(" ", "").upper()
-            if re.fullmatch(r"W\d+", vs) and w_start_col is None:
-                w_start_col = c
-                w_first_label = vs
-            if "W" in vs and "합계" in vs:
-                m = re.search(r"(W\d+)", vs)
-                if m and m.group(1) not in weekly_cols:
-                    weekly_cols[m.group(1)] = c
-            if "월합계" in vs and "월합계" not in col_map:
-                col_map["월합계"] = c
-                m = re.search(r"(\d+월)", vs)
-                if m:
-                    parsed["monthly_months"] = [m.group(1)]
 
-    total_plan_rows, total_act_rows = [], []
-    all_plan_rows, all_act_rows = [], []
-    curr_group = ""
-    empty_streak = 0
+            vs = norm_txt(val)
+            if "W" in vs and "합계" in vs:
+                m_w = re.search(r"(W\d+)", vs)
+                if m_w and m_w.group(1) not in weekly_sum_cols:
+                    weekly_sum_cols[m_w.group(1)] = c
+            elif "월합계" in vs and "월합계" not in col_map:
+                col_map["월합계"] = c
+                m_m = re.search(r"(\d+월)", vs)
+                if m_m:
+                    parsed["monthly_months"] = [m_m.group(1)]
+            else:
+                dt_cand, run_yr, prev_m = parse_excel_date_header(val, run_yr, prev_m)
+                if dt_cand is not None and c not in daily_date_cols:
+                    daily_date_cols[c] = dt_cand
+
+    # 4) 오직 '생산' 블록('11월 생산 계획 대비 실적')의 '계획' / '실적' 행만 정확히 추출 (출하/매출 블록 합산 방지!)
+    prod_plan_row = None
+    prod_act_row = None
 
     for r in range(summary_start + 1, min(sheet.max_row + 1, summary_start + 35)):
-        row_text = "".join([str(safe_cell(sheet, r, c) or "") for c in range(1, 8)]).replace(" ", "")
-        if not row_text:
-            empty_streak += 1
-            if empty_streak >= 3 and all_plan_rows:
-                break
-            continue
-        empty_streak = 0
-        if any(stop_k in row_text for stop_k in ["당일완제품재고", "주요모델별"]):
+        grp_a = norm_txt(merged_cell(sheet, merged_map, r, 1))
+        lbl_b = norm_txt(safe_cell(sheet, r, 2))
+
+        if any(stop_k in (grp_a + lbl_b) for stop_k in ("당일완제품재고", "주요모델별")):
             break
 
-        val_a = str(safe_cell(sheet, r, 1) or "").replace(" ", "").strip()
-        val_b = str(safe_cell(sheet, r, 2) or "").replace(" ", "").strip()
+        # '출하' 또는 '매출' 섹션에 진입하면 생산 행 탐색 종료
+        if ("출하" in grp_a or "매출" in grp_a) and "생산" not in grp_a:
+            if prod_plan_row is not None:
+                break
+            continue
 
-        if val_a and val_a not in ("계획", "실적", "달성률", "차이", "차질"):
-            curr_group = val_a.upper()
+        if "생산" in grp_a or prod_plan_row is None:
+            if lbl_b == "계획" and prod_plan_row is None:
+                prod_plan_row = r
+            elif lbl_b == "실적" and prod_act_row is None:
+                prod_act_row = r
 
-        is_total_grp = any(k in curr_group for k in ["전체", "합계", "총계", "TOTAL", "전사", "통합"])
-
-        if val_a == "계획" or val_b == "계획":
-            all_plan_rows.append(r)
-            if is_total_grp:
-                total_plan_rows.append(r)
-        elif val_a == "실적" or val_b == "실적":
-            all_act_rows.append(r)
-            if is_total_grp:
-                total_act_rows.append(r)
-
-    target_plan_rows = total_plan_rows[:1] if total_plan_rows else all_plan_rows
-    target_act_rows = total_act_rows[:1] if total_act_rows else all_act_rows
-
-    def get_single_cell_val(r, c):
+    def get_k_scaled_val(r, c):
         if not r or not c:
             return 0
-        v = extract_num(safe_cell(sheet, r, c))
-        if v is None:
+        v = extract_num(merged_cell(sheet, merged_map, r, c))
+        if v is None or v == 0:
             return 0
-        if 0 < abs(v) < 10000:
-            v *= 1000
+        # 요약 시트 단위가 K(예: 172 -> 172,000, 4,477 -> 4,477,000)이므로 100,000 미만은 x1,000 변환
+        if 0 < abs(v) < 100_000:
+            v *= 1000.0
         return int(round(v))
 
-    def get_rows_val(rows, c):
-        if not rows or not c:
-            return 0
-        return sum(get_single_cell_val(r, c) for r in rows)
+    parsed["daily_prod_plan"] = get_k_scaled_val(prod_plan_row, col_map.get("target"))
+    parsed["daily_prod_actual"] = get_k_scaled_val(prod_act_row, col_map.get("target"))
 
-    parsed["daily_prod_plan"] = get_rows_val(target_plan_rows, col_map.get("target"))
-    parsed["daily_prod_actual"] = get_rows_val(target_act_rows, col_map.get("target"))
-
+    # 5) 주차별 계획 및 순수 주간 실적 산출 ('Wxx 합계' 실적 셀이 누계로 병합되어 있으므로 일별 실적 합산 우선)
+    sorted_weeks = sorted(weekly_sum_cols.items(), key=lambda x: x[1])
     labels, wp, wa = [], [], []
-    seen_labels = set()
-    col_bounds_for_week = []
+    prev_bound_col = 3  # C열(10월 이월) 이후부터 스캔
+    prev_cum_act = 0
+    matched_week_lbl = target_iso_week
 
-    if w_start_col and weekly_cols:
-        min_w_col = min(weekly_cols.values())
-        w_first_plan, w_first_act = 0, 0
-        for c in range(w_start_col, min_w_col):
-            w_first_plan += get_rows_val(target_plan_rows, c)
-            w_first_act += get_rows_val(target_act_rows, c)
-        labels.append(w_first_label)
-        wp.append(w_first_plan)
-        wa.append(w_first_act)
-        seen_labels.add(w_first_label)
-        col_bounds_for_week.append((w_first_label, min_w_col - 1))
+    for w_lbl, w_col in sorted_weeks:
+        w_plan_val = get_k_scaled_val(prod_plan_row, w_col)
+        w_sheet_act = get_k_scaled_val(prod_act_row, w_col)
 
-    for lbl, c_idx in sorted(weekly_cols.items(), key=lambda x: x[1]):
-        if lbl in seen_labels:
-            continue
-        labels.append(lbl)
-        wp.append(get_rows_val(target_plan_rows, c_idx))
-        wa.append(get_rows_val(target_act_rows, c_idx))
-        seen_labels.add(lbl)
-        col_bounds_for_week.append((lbl, c_idx))
+        # prev_bound_col + 1 ~ w_col - 1 구간의 일별 컬럼 중 기준일 이하 실적 합산
+        day_cols_in_span = [
+            c for c in range(prev_bound_col + 1, w_col)
+            if (c in daily_date_cols and daily_date_cols[c] <= target_date_obj)
+        ]
+        all_days_in_span = [daily_date_cols[c] for c in range(prev_bound_col + 1, w_col) if c in daily_date_cols]
+
+        if col_map.get("target") and prev_bound_col < col_map["target"] <= w_col:
+            matched_week_lbl = w_lbl
+
+        if day_cols_in_span:
+            pure_w_act = sum(get_k_scaled_val(prod_act_row, c) for c in day_cols_in_span)
+            # 첫 주차(W45)에 시트상 누계가 일별 합보다 크면(이월 등) 보정
+            if not labels and w_sheet_act > pure_w_act and all_days_in_span and max(all_days_in_span) <= target_date_obj:
+                pure_w_act = w_sheet_act
+        elif all_days_in_span and min(all_days_in_span) > target_date_obj:
+            pure_w_act = 0
+        else:
+            # 일별 날짜 헤더가 없는 경우 주차 합계(누계) 차분으로 계산
+            pure_w_act = max(0, w_sheet_act - prev_cum_act) if w_sheet_act >= prev_cum_act else w_sheet_act
+
+        if w_sheet_act > prev_cum_act:
+            prev_cum_act = w_sheet_act
+
+        labels.append(w_lbl)
+        wp.append(w_plan_val)
+        wa.append(pure_w_act)
+        prev_bound_col = w_col
 
     fallback_weeks = get_month_iso_weeks(t_y, t_m)
     parsed["weekly_labels"] = labels if labels else fallback_weeks
@@ -627,31 +638,36 @@ def parse_production_excel(file_src, target_date_str):
     week_plan_map = dict(zip(parsed["weekly_labels"], parsed["weekly_plan"]))
     week_act_map = dict(zip(parsed["weekly_labels"], parsed["weekly_actual"]))
 
-    matched_week_lbl = target_iso_week
-    if matched_week_lbl not in week_plan_map and col_map.get("target") and col_bounds_for_week:
-        t_col = col_map["target"]
-        for w_lbl, end_col in col_bounds_for_week:
-            if t_col <= end_col:
-                matched_week_lbl = w_lbl
-                break
-
     parsed["cur_week_label"] = matched_week_lbl
     parsed["cur_week_prod_p"] = week_plan_map.get(matched_week_lbl, 0)
     parsed["cur_week_prod_a"] = week_act_map.get(matched_week_lbl, 0)
 
-    m_plan = get_rows_val(target_plan_rows, col_map.get("월합계"))
-    m_act = get_rows_val(target_act_rows, col_map.get("월합계"))
-    if m_act == 0 and sum(wa) > 0:
-        m_act = sum(wa)
-    parsed["monthly_plan"] = m_plan
-    parsed["monthly_actual"] = m_act
+    # 6) 월간 생산 계획 & 실적 산출
+    m_plan = get_k_scaled_val(prod_plan_row, col_map.get("월합계"))
+    m_sheet_act = get_k_scaled_val(prod_act_row, col_map.get("월합계"))
 
+    # 기준일까지의 전체 일별 실적 합계 (당주 진행분 포함)
+    valid_month_day_cols = [
+        c for c, dt in daily_date_cols.items()
+        if dt.year == t_y and dt.month == t_m and dt <= target_date_obj
+    ]
+    sum_daily_month_act = sum(get_k_scaled_val(prod_act_row, c) for c in valid_month_day_cols)
+    sum_weekly_act = sum(wa)
+
+    # 시트의 '11월 합계' 수식이 완료된 주차(예: W47=3,260K)까지만 잡혀 있고 당주(W48=281K)가 빠진 경우 자동 합산
+    best_m_act = max(m_sheet_act, sum_weekly_act, sum_daily_month_act)
+    parsed["monthly_plan"] = m_plan
+    parsed["monthly_actual"] = best_m_act
+    parsed["monthly_sheet_total"] = m_sheet_act
+    parsed["monthly_cur_w_add"] = max(0, best_m_act - m_sheet_act) if m_sheet_act > 0 else 0
+
+    # 7) 모델별 당일 생산실적 시트 파싱
     model_sheet = next((s for s in wb.sheetnames if "모델" in s), None)
     if model_sheet:
         ms = wb[model_sheet]
         hr, pr, ar = -1, -1, -1
         for r in range(1, 12):
-            if "주요모델별" in "".join([str(safe_cell(ms, r, c) or "") for c in range(1, 6)]).replace(" ", ""):
+            if "주요모델별" in "".join(norm_txt(safe_cell(ms, r, c)) for c in range(1, 6)):
                 hr = r
                 break
         if hr != -1:
@@ -662,7 +678,7 @@ def parse_production_excel(file_src, target_date_str):
                     models.append(mn)
                     c_idx.append(c)
             for r in range(hr + 1, hr + 18):
-                rt = "".join([str(safe_cell(ms, r, c) or "") for c in range(1, 4)]).replace(" ", "")
+                rt = "".join(norm_txt(safe_cell(ms, r, c)) for c in range(1, 4))
                 if "당일계획" in rt and pr == -1:
                     pr = r
                 if "당일실적" in rt and ar == -1:
@@ -675,11 +691,20 @@ def parse_production_excel(file_src, target_date_str):
     return parsed
 
 
-# 4-3. 통합 출하·매출 파일 — (A) '월별요약' 시트 파서
+# 4-3. 통합 출하·매출 파일 — (A) '월별요약' 시트 파서 (숨김열 제외 및 미병합 '~기준일' 헤더 완벽 처리)
 def parse_monthly_summary_sheet(ws):
     merged_map = build_merged_lookup(ws)
     max_r = min(300, ws.max_row)
     max_c = min(60, ws.max_column)
+
+    # 숨김 처리된 보조열(예: H, K, N, Q열 USD 보조금액 등) 판별
+    hidden_cols = set()
+    for c in range(1, max_c + 1):
+        col_let = get_column_letter(c)
+        if col_let in ws.column_dimensions and getattr(ws.column_dimensions[col_let], "hidden", False):
+            hidden_cols.add(c)
+
+    visible_cols = [c for c in range(1, max_c + 1) if c not in hidden_cols]
 
     detected_bands = []
     skip_until_r = 0
@@ -688,7 +713,7 @@ def parse_monthly_summary_sheet(ws):
         if r < skip_until_r:
             continue
         qty_cols, amt_cols = [], []
-        for c in range(1, max_c + 1):
+        for c in visible_cols:
             sub_raw = norm_txt(ws.cell(r + 1, c).value)
             if "수량" in sub_raw or sub_raw == "QTY":
                 qty_cols.append(c)
@@ -703,7 +728,9 @@ def parse_monthly_summary_sheet(ws):
             month_label = ""
             ref_date_label = ""
 
-            for c in range(1, first_m_c):
+            for c in visible_cols:
+                if c >= first_m_c:
+                    break
                 lbl = norm_txt(merged_cell(ws, merged_map, r, c)) + norm_txt(merged_cell(ws, merged_map, r + 1, c))
                 if "구분" in lbl:
                     col_map.setdefault("gubun", c)
@@ -712,9 +739,15 @@ def parse_monthly_summary_sheet(ws):
                 if any(k in lbl for k in ("모델", "MODEL", "품명")):
                     col_map.setdefault("model", c)
 
-            for c in range(first_m_c, last_m_c + 1):
+            # 상단 헤더가 미병합('I3=목표' | 'J3=~11/25', 'L3=실적' | 'M3=~11/25')이어도 이전 섹션명을 그대로 유지!
+            carried_top = ""
+            section_keywords = ("계획", "목표", "실적", "대비", "진도", "달성", "차이")
+
+            for c in visible_cols:
+                if c < first_m_c or c > last_m_c:
+                    continue
                 raw_top = str(merged_cell(ws, merged_map, r, c) or "").strip()
-                top_clean = norm_txt(raw_top)
+                raw_top_norm = norm_txt(raw_top)
                 sub_clean = norm_txt(ws.cell(r + 1, c).value) or norm_txt(merged_cell(ws, merged_map, r + 1, c))
 
                 m_mon = re.search(r"(\d{1,2})\s*월", raw_top)
@@ -723,6 +756,11 @@ def parse_monthly_summary_sheet(ws):
                 m_ref = re.search(r"~\s*(\d{1,2}\s*[-/.]\s*\d{1,2})", raw_top)
                 if m_ref and not ref_date_label:
                     ref_date_label = re.sub(r"\s+", "", m_ref.group(1))
+
+                if any(kw in raw_top_norm for kw in section_keywords):
+                    carried_top = raw_top_norm
+
+                top_clean = carried_top
 
                 if "계획" in top_clean and "대비" not in top_clean and "진도" not in top_clean:
                     if "수량" in sub_clean or sub_clean == "QTY":
@@ -737,7 +775,7 @@ def parse_monthly_summary_sheet(ws):
                 elif "목표" in top_clean and not any(k in top_clean for k in ("진도", "달성", "대비")):
                     if "수량" in sub_clean or sub_clean == "QTY":
                         col_map.setdefault("target_qty", c)
-                    elif "금액" in sub_clean or "매출" in sub_clean:
+                    elif any(k in sub_clean for k in ("금액", "매출", "AMT")):
                         col_map.setdefault("target_amt", c)
                 elif "진도" in top_clean or "달성" in top_clean:
                     if "목표" in sub_clean or "계획" in sub_clean:
@@ -749,11 +787,12 @@ def parse_monthly_summary_sheet(ws):
                         col_map.setdefault("act_qty", c)
                     elif any(k in sub_clean for k in ("금액", "매출", "AMT")):
                         col_map.setdefault("act_amt", c)
-                elif ("차이" in top_clean or "차이" in sub_clean) and not any(
+                elif ("차이" in raw_top_norm or "차이" in sub_clean) and not any(
                     k in sub_clean for k in ("수량", "금액", "매출", "QTY", "AMT")
-                ) and "대비" not in top_clean:
+                ) and "대비" not in raw_top_norm:
                     col_map.setdefault("rate_diff", c)
 
+            # 가시 열(visible_cols) 순서 기반 안전 폴백
             if "act_qty" not in col_map and len(qty_cols) >= 3:
                 col_map.setdefault("plan_qty", qty_cols[0])
                 col_map.setdefault("target_qty", qty_cols[1])
@@ -784,12 +823,24 @@ def parse_monthly_summary_sheet(ws):
     if not detected_bands:
         return None
 
+    # 상단 요약표에 수식 누락으로 미매핑된 컬럼이 있으면 하단 상세표(병합 헤더가 명확한 표) 컬럼 위치로 교차 보정
+    detail_band = next((b for b in detected_bands if b["kind"] == "detail"), None)
+    if detail_band:
+        for b in detected_bands:
+            if b["kind"] == "summary":
+                for m_key in (
+                    "plan_qty", "plan_amt", "target_qty", "target_amt",
+                    "act_qty", "act_amt", "diff_qty", "diff_amt",
+                    "rate_target", "rate_act", "rate_diff",
+                ):
+                    if m_key not in b["col_map"] and m_key in detail_band["col_map"]:
+                        b["col_map"][m_key] = detail_band["col_map"][m_key]
+
     header_rows_set = set()
     for b in detected_bands:
         header_rows_set.add(b["hdr_r"])
         header_rows_set.add(b["hdr_r"] + 1)
 
-    # 낱개단위(예: 4,710,000) vs K단위(예: 4,710), 원단위(예: 34,000,000,000) vs 억단위(예: 340) 자동 판별
     sample_qtys, sample_amts, sample_pcts = [], [], []
     for idx, b in enumerate(detected_bands):
         start_r = b["hdr_r"] + 2
@@ -940,6 +991,8 @@ def parse_monthly_summary_sheet(ws):
             for r in range(start_r, end_r + 1):
                 lbl = ""
                 for c_chk in range(g_col, first_m_c):
+                    if c_chk in hidden_cols:
+                        continue
                     v_chk = str(ws.cell(r, c_chk).value or merged_cell(ws, merged_map, r, c_chk) or "").strip()
                     if v_chk and norm_txt(v_chk) != "구분":
                         lbl = v_chk
@@ -1024,14 +1077,13 @@ def parse_monthly_summary_sheet(ws):
     }
 
 
-# 4-4. 통합 출하·매출 파일 — (B) '11월 진도현황' 시트 파서 (Daily 출하계획 / 출하실적 / 단가 / 매출)
+# 4-4. 통합 출하·매출 파일 — (B) '11월 진도현황' 시트 파서 (하단 Total/요약행 이중합산 및 단가 전이 차단)
 def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_rate=1330.0):
     merged_map = build_merged_lookup(ws)
     t_y, t_m, t_d = parse_target_ymd(target_date_str)
     target_date_obj = datetime.date(t_y, t_m, t_d)
     target_iso_key = get_iso_week_key(target_date_obj)
 
-    # 1) 시트 상단에서 연도 및 환율(예: '환율 1,330') 자동 추출
     sheet_year = t_y
     detected_ex_rate = None
     for r in range(1, 5):
@@ -1054,7 +1106,6 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
 
     ex_rate = detected_ex_rate or fallback_ex_rate
 
-    # 2) 헤더 행(SEC-CODE, 구분, 매출(KRW), 합계, 일자별 컬럼) 탐색
     header_row = 3
     for r in range(1, 8):
         row_join = "".join(norm_txt(safe_cell(ws, r, c)) for c in range(1, min(20, ws.max_column + 1)))
@@ -1076,15 +1127,14 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
         elif re.fullmatch(r"[1-4]Q", h_txt) or any(k in h_txt for k in ("단가", "PRICE")):
             price_col = price_col or c
         elif h_txt == "구분":
-            gubun_col = c  # H열과 K열 모두 '구분'일 때 합계 바로 왼쪽(K열) 또는 H열 모두 동일 값
+            gubun_col = c
         elif "USD" in h_txt:
             usd_col = usd_col or c
         elif "KRW" in h_txt or "원화" in h_txt:
             krw_col = krw_col or c
-        elif h_txt == "합계" or h_txt == "누계":
+        elif h_txt in ("합계", "누계"):
             sum_col = sum_col or c
 
-    # B열('모델': 삼성향)과 C열('모델': F966B)이 모두 '모델' 헤더인 경우 실제 모델코드 열(C열) 선택
     if len(model_cand_cols) >= 2:
         cust_col = model_cand_cols[0]
         model_col = model_cand_cols[-1]
@@ -1097,7 +1147,10 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
     sec_col = sec_col or 5
     if price_col is None:
         for c_chk in range(sec_col + 1, (gubun_col or 9)):
-            sample_p = [extract_num(safe_cell(ws, r_chk, c_chk)) for r_chk in range(header_row + 1, min(header_row + 40, ws.max_row + 1))]
+            sample_p = [
+                extract_num(safe_cell(ws, r_chk, c_chk))
+                for r_chk in range(header_row + 1, min(header_row + 40, ws.max_row + 1))
+            ]
             valid_p = [x for x in sample_p if x is not None and 0 < x < 500]
             if valid_p:
                 price_col = c_chk
@@ -1106,7 +1159,6 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
     gubun_col = gubun_col or 8
     sum_col = sum_col or 12
 
-    # 3) 합계 열(L열) 우측의 모든 일자 컬럼(11/1 ~ 12/1 등) 추출
     date_cols = []
     run_yr = sheet_year
     prev_m = None
@@ -1118,7 +1170,6 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
     if not date_cols:
         return None
 
-    # 환율 미검출 시 USD매출(I열)과 KRW매출(J열) 비율로 역산
     if detected_ex_rate is None and usd_col and krw_col:
         for r in range(header_row + 1, ws.max_row + 1):
             u_v = extract_num(safe_cell(ws, r, usd_col))
@@ -1133,6 +1184,7 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
     plan_by_date = {ymd: {"qty": 0, "rev": 0.0, "items": []} for _, _, ymd, _, _ in date_cols}
     actual_by_date = {ymd: {"qty": 0, "rev": 0.0, "items": []} for _, _, ymd, _, _ in date_cols}
     bottom_daily_act_rev = {}
+    bottom_daily_plan_rev = {}
 
     weekly_ship_plan_iso, weekly_rev_plan_iso = {}, {}
     weekly_ship_act_iso, weekly_rev_act_iso = {}, {}
@@ -1145,54 +1197,55 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
     plan_model_period = {"daily": {}, "weekly": {}, "monthly": {}}
     actual_model_period = {"daily": {}, "weekly": {}, "monthly": {}}
 
-    curr_cust, curr_model, curr_gh = "", "", ""
-    curr_usd_price = 0.0
+    reached_total_footer = False
 
     for r in range(header_row + 1, ws.max_row + 1):
-        raw_b = str(ws.cell(r, cust_col).value or merged_cell(ws, merged_map, r, cust_col) or "").strip()
-        raw_c = str(ws.cell(r, model_col).value or merged_cell(ws, merged_map, r, model_col) or "").strip()
-        raw_sec = str(ws.cell(r, sec_col).value or "").strip()
+        raw_b = str(merged_cell(ws, merged_map, r, cust_col) or "").strip()
+        raw_c = str(merged_cell(ws, merged_map, r, model_col) or "").strip()
+        raw_sec = str(merged_cell(ws, merged_map, r, sec_col) or "").strip()
         raw_gbn = norm_txt(ws.cell(r, gubun_col).value)
-        raw_sum_lbl = norm_txt(ws.cell(r, sum_col).value)
+        raw_sum_val = ws.cell(r, sum_col).value
+        raw_sum_lbl = norm_txt(raw_sum_val) if isinstance(raw_sum_val, str) else ""
 
-        # 하단 노란색 '출하실적 | 금액' 요약행 감지 (예: 380행)
-        if raw_gbn == "출하실적" and raw_sum_lbl == "금액":
-            for c_idx, _, ymd, _, _ in date_cols:
-                v_amt = extract_num(ws.cell(r, c_idx).value)
-                if v_amt is not None and v_amt > 0:
-                    rev_ok = (v_amt / 100_000_000.0) if v_amt >= 10_000_000 else v_amt
-                    bottom_daily_act_rev[ymd] = round(rev_ok, 4)
+        # 하단 요약행('출하실적 | 금액' 또는 '출하계획 | 금액') 추출 후 모델 집계에서는 완전 제외!
+        if raw_sum_lbl in ("수량", "금액"):
+            if raw_sum_lbl == "금액" and raw_gbn in ("출하실적", "출하계획"):
+                target_dict = bottom_daily_act_rev if raw_gbn == "출하실적" else bottom_daily_plan_rev
+                for c_idx, _, ymd, _, _ in date_cols:
+                    v_amt = extract_num(ws.cell(r, c_idx).value)
+                    if v_amt is not None and v_amt > 0:
+                        rev_ok = (v_amt / 100_000_000.0) if v_amt >= 10_000_000 else v_amt
+                        target_dict[ymd] = round(rev_ok, 4)
             continue
 
         row_id_txt = norm_txt(f"{raw_b}{raw_c}{raw_sec}")
         if any(k in row_id_txt for k in ("TOTAL", "G.TOTAL", "합계", "총계", "소계")):
+            reached_total_footer = True
+            continue
+
+        # 삼성향 Total / G.Total 이후 행이거나 모델명·품번이 모두 비어있는 하단 행은 절대 개별 모델로 읽지 않음!
+        if reached_total_footer or (not raw_c and not raw_sec):
             continue
 
         if raw_gbn not in ("출하계획", "출하실적"):
             continue
 
-        if raw_b:
-            curr_cust = raw_b
-        if raw_c:
-            curr_model = raw_c
-        if raw_sec and raw_sec.upper() != "#N/A":
-            curr_gh = raw_sec
-        elif raw_sec.upper() == "#N/A":
-            curr_gh = ""
+        curr_gh = "" if raw_sec.upper() in ("#N/A", "N/A", "NONE") else raw_sec
+        mdl_name = raw_c or curr_gh
+        if not mdl_name:
+            continue
 
-        p_num = extract_num(ws.cell(r, price_col).value)
-        if p_num is not None and p_num > 0:
-            curr_usd_price = p_num
+        # 행 자체의 단가만 사용 (이전 모델의 단가를 $0 행으로 전이시키지 않음!)
+        p_num = extract_num(merged_cell(ws, merged_map, r, price_col))
+        row_usd_price = p_num if (p_num is not None and p_num > 0) else 0.0
 
-        # 원화 단가 결정: USD단가 * 환율 우선, 없으면 누적KRW / 누적수량 역산
-        unit_krw = curr_usd_price * ex_rate if curr_usd_price > 0 else 0.0
+        unit_krw = row_usd_price * ex_rate if row_usd_price > 0 else 0.0
         if unit_krw == 0 and krw_col and sum_col:
             tot_k = extract_num(ws.cell(r, krw_col).value)
             tot_q = extract_num(ws.cell(r, sum_col).value)
             if tot_k and tot_q and tot_q > 0:
                 unit_krw = tot_k / tot_q
 
-        mdl_name = curr_model or curr_gh or "기타"
         gh_clean = clean_key(curr_gh)
         gh_suf = get_gh_suffix(curr_gh)
 
@@ -1222,7 +1275,7 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
                     {
                         "model": mdl_name,
                         "gh_code": curr_gh or "-",
-                        "site": curr_cust or "삼성향",
+                        "site": raw_b or "삼성향",
                         "qty": q_val,
                         "price": unit_krw,
                         "rev_ok": rev_ok,
@@ -1258,7 +1311,7 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
                     {
                         "model": mdl_name,
                         "gh_code": curr_gh or "-",
-                        "site": curr_cust or "삼성향",
+                        "site": raw_b or "삼성향",
                         "qty": q_val,
                         "price": unit_krw,
                         "rev_ok": rev_ok,
@@ -1289,12 +1342,15 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
                     md_a["Actual"] += q_val
                     md_a["Rev_Act"] += rev_ok
 
-    # 하단 노란색 요약행(출하실적 금액)이 있는 날짜는 공식 일별 매출액으로 보정
+    # 하단 노란색 요약행(출하실적 금액 / 출하계획 금액)이 존재하면 일별 공식 매출액 반영
     for ymd, official_rev in bottom_daily_act_rev.items():
         if ymd in actual_by_date and actual_by_date[ymd]["qty"] > 0:
             actual_by_date[ymd]["rev"] = official_rev
 
-    # 보정된 일별 매출로 주간/월간 실적 매출 재합산
+    for ymd, official_p_rev in bottom_daily_plan_rev.items():
+        if ymd in plan_by_date and plan_by_date[ymd]["qty"] > 0:
+            plan_by_date[ymd]["rev"] = official_p_rev
+
     if bottom_daily_act_rev:
         weekly_rev_act_iso.clear()
         target_month_w_rev_a.clear()
@@ -1306,6 +1362,17 @@ def parse_daily_progress_sheet(ws, target_date_str, mapping_data, fallback_ex_ra
                 if dt_obj.year == t_y and dt_obj.month == t_m:
                     target_month_w_rev_a[w_lbl] = target_month_w_rev_a.get(w_lbl, 0.0) + r_v
                     monthly_rev_a += r_v
+
+    if bottom_daily_plan_rev:
+        weekly_rev_plan_iso.clear()
+        target_month_w_rev_p.clear()
+        monthly_rev_p = 0.0
+        for _, dt_obj, ymd, w_key, w_lbl in date_cols:
+            r_pv = plan_by_date[ymd]["rev"]
+            weekly_rev_plan_iso[w_key] = weekly_rev_plan_iso.get(w_key, 0.0) + r_pv
+            if dt_obj.year == t_y and dt_obj.month == t_m:
+                target_month_w_rev_p[w_lbl] = target_month_w_rev_p.get(w_lbl, 0.0) + r_pv
+                monthly_rev_p += r_pv
 
     target_ymd = target_date_obj.strftime("%Y-%m-%d")
     daily_p_info = plan_by_date.get(target_ymd, {"qty": 0, "rev": 0.0})
@@ -1483,7 +1550,8 @@ def parse_sales_ref_fcst_sheet(ws, target_date_str, mapping_data, exchange_rate=
             continue
         if not curr_site and not curr_gh:
             continue
-        if any(k in norm_txt(f"{curr_site}{curr_gh}") for k in ("합계", "소계", "총계", "TOTAL")):
+        if any(k in norm_txt(f"{v_site}{v_gh}{v_proj}{curr_site}{curr_gh}") for k in ("합계", "소계", "총계", "TOTAL", "G.TOTAL")):
+            curr_site, curr_gh, curr_proj = "", "", ""
             continue
 
         gh_clean = clean_key(curr_gh)
@@ -1725,6 +1793,8 @@ def run_dashboard_pipeline(target_date_input, ex_rate_input, uploaded_files):
             st.session_state["kpi_data"]["weekly"]["prod_a"] = p["cur_week_prod_a"]
             st.session_state["kpi_data"]["monthly"]["prod_p"] = p["monthly_plan"]
             st.session_state["kpi_data"]["monthly"]["prod_a"] = p["monthly_actual"]
+            st.session_state["kpi_data"]["monthly"]["prod_sheet_total"] = p.get("monthly_sheet_total", 0)
+            st.session_state["kpi_data"]["monthly"]["prod_cur_w_add"] = p.get("monthly_cur_w_add", 0)
 
             st.session_state["chart_data"]["daily_models"] = p["daily_models"]
             st.session_state["chart_data"]["daily_prod_p"] = p["daily_prod_p"]
@@ -2486,8 +2556,11 @@ elif menu == "🏠 현황":
         ship_sub = f"기준일 누적 목표: {format_k(t_ship_goal)} (목표 대비 {fmt_signed_k(kpi['monthly']['ship_a'] - t_ship_goal)})" if t_ship_goal > 0 else None
         rev_sub = f"기준일 누적 목표: {t_rev_goal:,.1f}억 (목표 대비 {kpi['monthly']['rev_a'] - t_rev_goal:+,.1f}억)" if t_rev_goal > 0 else None
 
+        p_sheet_tot = kpi["monthly"].get("prod_sheet_total", 0)
+        p_cur_add = kpi["monthly"].get("prod_cur_w_add", 0)
+        prod_sub = f"시트 월합계 {format_k(p_sheet_tot)} + {cur_week_lbl} 일별실적 {format_k(p_cur_add)}" if p_cur_add > 0 else None
         with m1:
-            render_kpi_card(f"{t_m}월 생산 누계 (전체)", "🏭", kpi["monthly"]["prod_a"], kpi["monthly"]["prod_p"])
+            render_kpi_card(f"{t_m}월 생산 누계 (전체)", "🏭", kpi["monthly"]["prod_a"], kpi["monthly"]["prod_p"], sub_caption=prod_sub)
             render_achievement_gauge("생산", kpi["monthly"]["prod_a"], kpi["monthly"]["prod_p"], unit="K")
         with m2:
             render_kpi_card(f"{t_m}월 출하 누계 (전체)", "🚚", kpi["monthly"]["ship_a"], kpi["monthly"]["ship_p"], sub_caption=ship_sub)
@@ -3167,25 +3240,22 @@ elif menu == "5. 캘린더":
                         {"model": m_name, "gh_code": gh, "site": site, "qty": q, "price": price, "rev_ok": rev_val}
                     )
 
+        has_month_prog_plan = any(
+            k.startswith(cur_ym_str) and v.get("qty", 0) > 0 for k, v in plan_by_date.items()
+        )
         day_supply_map = {}
         for d in range(1, num_days + 1):
             ymd_key = f"{cur_year:04d}-{selected_m:02d}-{d:02d}"
             prog_p = plan_by_date.get(ymd_key)
             fcst_p = fcst_day_map[d]
-            cell_dt = datetime.date(cur_year, selected_m, d)
-            # 과거~기준일은 진도현황 출하계획 우선(없으면 매출참고), 미래일은 매출참고 FCST 우선(없으면 진도현황)
-            if cell_dt <= target_date_obj:
-                if prog_p and prog_p["qty"] > 0:
+            # 해당 월에 '진도현황' 출하계획이 존재하면 월 전체 일자에 동일 기준(진도현황 출하계획)을 일관 적용하고, 없는 월(익월 등)은 '매출 참고' FCST 적용
+            if has_month_prog_plan:
+                if prog_p and (prog_p["qty"] > 0 or ymd_key in plan_by_date):
                     day_supply_map[d] = {"total": prog_p["qty"], "total_rev": prog_p["rev"], "items": prog_p["items"]}
                 else:
                     day_supply_map[d] = fcst_p
             else:
-                if fcst_p["total"] > 0:
-                    day_supply_map[d] = fcst_p
-                elif prog_p and prog_p["qty"] > 0:
-                    day_supply_map[d] = {"total": prog_p["qty"], "total_rev": prog_p["rev"], "items": prog_p["items"]}
-                else:
-                    day_supply_map[d] = fcst_p
+                day_supply_map[d] = fcst_p
 
         m_total_qty = sum(day_supply_map[d]["total"] for d in day_supply_map)
         m_total_rev = sum(day_supply_map[d]["total_rev"] for d in day_supply_map)
