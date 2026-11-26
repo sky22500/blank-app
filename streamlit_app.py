@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 # 1. 페이지 설정 및 영구 저장소 경로 설정
 st.set_page_config(page_title="마케팅 부문 대시보드", layout="wide")
 
-STATE_VERSION = 7
+STATE_VERSION = 8
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 STORE_DIR = os.path.join(BASE_DIR, ".dashboard_store")
 STATE_JSON_PATH = os.path.join(STORE_DIR, "dashboard_state.json")
@@ -315,6 +315,7 @@ def get_default_state():
             "detail_rows": [],
         },
         "plan_by_date": {},
+        "calendar_daily_from_prod": {},
         "actual_by_date": {},
         "actual_months_loaded": [],
         "inventory_data": {"qty": 0, "days": 0.0},
@@ -685,6 +686,52 @@ def parse_production_excel(file_src, target_date_str):
                     parsed["daily_prod_p"].append(int(round(extract_num(safe_cell(ms, pr, c)) or 0)))
                     parsed["daily_prod_a"].append(int(round(extract_num(safe_cell(ms, ar, c)) or 0)))
                 parsed["daily_models"] = models
+
+    # 8) 캘린더용 일별 출하/매출 계획 및 실적 추출 (생산 블록은 제외)
+    ship_plan_row, ship_act_row = None, None
+    rev_plan_row, rev_act_row = None, None
+
+    for r in range(summary_start + 1, min(sheet.max_row + 1, summary_start + 45)):
+        grp_a = norm_txt(merged_cell(sheet, merged_map, r, 1))
+        lbl_b = norm_txt(safe_cell(sheet, r, 2))
+        if any(stop_k in (grp_a + lbl_b) for stop_k in ("당일완제품재고", "주요모델별")):
+            break
+        if "출하" in grp_a and "생산" not in grp_a and "매출" not in grp_a:
+            if lbl_b == "계획" and ship_plan_row is None:
+                ship_plan_row = r
+            elif lbl_b == "실적" and ship_act_row is None:
+                ship_act_row = r
+        elif "매출" in grp_a:
+            if lbl_b == "계획" and rev_plan_row is None:
+                rev_plan_row = r
+            elif lbl_b == "실적" and rev_act_row is None:
+                rev_act_row = r
+
+    def get_raw_num(r, c, scale_k=False):
+        if not r or not c:
+            return 0.0
+        v = extract_num(merged_cell(sheet, merged_map, r, c))
+        if v is None:
+            return 0.0
+        if scale_k and 0 < abs(v) < 100_000:
+            v *= 1000.0
+        return float(v)
+
+    cal_prod_days = {}
+    for c_idx, dt_obj in sorted(daily_date_cols.items(), key=lambda x: x[1]):
+        ymd = dt_obj.strftime("%Y-%m-%d")
+        sp_q = int(round(get_raw_num(ship_plan_row, c_idx, scale_k=True)))
+        sa_q = int(round(get_raw_num(ship_act_row, c_idx, scale_k=True)))
+        rp_a = round(get_raw_num(rev_plan_row, c_idx, scale_k=False), 2)
+        ra_a = round(get_raw_num(rev_act_row, c_idx, scale_k=False), 2)
+        cal_prod_days[ymd] = {
+            "plan_qty": sp_q,
+            "act_qty": sa_q,
+            "plan_rev": rp_a,
+            "act_rev": ra_a,
+        }
+
+    parsed["calendar_daily_from_prod"] = cal_prod_days
     return parsed
 
 
@@ -1824,6 +1871,7 @@ def run_dashboard_pipeline(target_date_input, ex_rate_input, uploaded_files):
 
             st.session_state["inventory_data"]["qty"] = p["inventory_qty"]
             st.session_state["inventory_data"]["days"] = p["inventory_days"]
+            st.session_state["calendar_daily_from_prod"] = p.get("calendar_daily_from_prod", {})
             st.session_state["data_loaded"] = True
             messages.append(
                 (
@@ -3315,22 +3363,52 @@ elif menu == "5. 캘린더":
                         {"model": m_name, "gh_code": gh, "site": site, "qty": q, "price": price, "rev_ok": rev_val}
                     )
 
+        cal_from_prod = st.session_state.get("calendar_daily_from_prod") or {}
+        has_prod_cal_month = any(
+            k.startswith(cur_ym_str)
+            and (
+                v.get("plan_qty", 0) > 0
+                or v.get("act_qty", 0) > 0
+                or v.get("plan_rev", 0.0) > 0
+                or v.get("act_rev", 0.0) > 0
+            )
+            for k, v in cal_from_prod.items()
+        )
+
         has_month_prog_plan = any(
             k.startswith(cur_ym_str) and v.get("qty", 0) > 0 for k, v in plan_by_date.items()
         )
         day_supply_map = {}
+        cal_prod_actual_override = {}
         for d in range(1, num_days + 1):
             ymd_key = f"{cur_year:04d}-{selected_m:02d}-{d:02d}"
             prog_p = plan_by_date.get(ymd_key)
             fcst_p = fcst_day_map[d]
-            # 해당 월에 '진도현황' 출하계획이 존재하면 월 전체 일자에 동일 기준(진도현황 출하계획)을 일관 적용하고, 없는 월(익월 등)은 '매출 참고' FCST 적용
-            if has_month_prog_plan:
+            p_day_row = cal_from_prod.get(ymd_key)
+
+            if has_prod_cal_month and p_day_row is not None:
+                # 생산계획 파일의 일별 '출하' 및 '매출' 기준 세팅 (생산 제외)
+                day_supply_map[d] = {
+                    "total": int(p_day_row.get("plan_qty", 0)),
+                    "total_rev": round(float(p_day_row.get("plan_rev", 0.0)), 2),
+                    "items": fcst_p["items"] if fcst_p["items"] else (prog_p["items"] if prog_p else []),
+                }
+                existing_act_items = actual_by_date.get(ymd_key, {}).get("items", [])
+                cal_prod_actual_override[ymd_key] = {
+                    "qty": int(p_day_row.get("act_qty", 0)),
+                    "rev": round(float(p_day_row.get("act_rev", 0.0)), 2),
+                    "items": existing_act_items,
+                }
+            elif has_month_prog_plan:
                 if prog_p and (prog_p["qty"] > 0 or ymd_key in plan_by_date):
                     day_supply_map[d] = {"total": prog_p["qty"], "total_rev": prog_p["rev"], "items": prog_p["items"]}
                 else:
                     day_supply_map[d] = fcst_p
             else:
                 day_supply_map[d] = fcst_p
+
+        if has_prod_cal_month:
+            has_month_actuals = True
 
         m_total_qty = sum(day_supply_map[d]["total"] for d in day_supply_map)
         m_total_rev = sum(day_supply_map[d]["total_rev"] for d in day_supply_map)
@@ -3428,7 +3506,7 @@ elif menu == "5. 캘린더":
                         is_past_or_target = cell_date <= target_date_obj
                         show_actual_mode = is_past_or_target and has_month_actuals
 
-                        act_day_data = actual_by_date.get(ymd_key, {"qty": 0, "rev": 0.0, "items": []})
+                        act_day_data = cal_prod_actual_override.get(ymd_key) if "cal_prod_actual_override" in locals() and ymd_key in cal_prod_actual_override else actual_by_date.get(ymd_key, {"qty": 0, "rev": 0.0, "items": []})
                         act_q = act_day_data["qty"]
                         act_rev = act_day_data["rev"]
 
@@ -3577,7 +3655,7 @@ elif menu == "5. 캘린더":
         trend_days = [f"{selected_m}/{d:02d}" for d in range(1, num_days + 1)]
         trend_plan_qtys = [day_supply_map[d]["total"] for d in range(1, num_days + 1)]
         trend_act_qtys = [
-            actual_by_date.get(f"{cur_year:04d}-{selected_m:02d}-{d:02d}", {}).get("qty", 0)
+            (cal_prod_actual_override.get(f"{cur_year:04d}-{selected_m:02d}-{d:02d}", {}).get("qty", 0) if "cal_prod_actual_override" in locals() and f"{cur_year:04d}-{selected_m:02d}-{d:02d}" in cal_prod_actual_override else actual_by_date.get(f"{cur_year:04d}-{selected_m:02d}-{d:02d}", {}).get("qty", 0))
             for d in range(1, num_days + 1)
         ]
         trend_revs = [round(day_supply_map[d]["total_rev"], 2) for d in range(1, num_days + 1)]
